@@ -1,0 +1,27 @@
+{
+  "name": "project-3backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seedPdfs.js",
+    "build-and-run": "npm run seed && npm run start",
+    "dev": "concurrently \"npm run build-and-run\" \"cd \\\"C:\\Users\\shivansh singh\\Desktop\\Project.react\\project-3\\\" && npm run dev\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1057.0",
+    "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.2",
+    "mongoose": "^9.6.3"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.1"
+  }
+}
