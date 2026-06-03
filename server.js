@@ -14,8 +14,14 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // 3. Middlewares
+// 💡 FIXED: Added your live Vercel link into the CORS array alongside local hosts
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: [
+    'http://localhost:3000', 
+    'http://localhost:5173', 
+    'https://studynexus-psi.vercel.app'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
 app.use(express.json());
@@ -133,7 +139,6 @@ app.get('/api/dev/seed', async (req, res) => {
 app.get('/', (req, res) => {
   res.send('StudyNexus API Gateway Layer Running Smoothly');
 });
-
 
 // 8. Start listening for traffic
 app.use('/api/ai', BackendAiRouter);
