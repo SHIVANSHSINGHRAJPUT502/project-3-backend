@@ -34,7 +34,7 @@ mongoose.connect(mongoURI, {
   .then(() => console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!'))
   .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
-// ─── SAFE MODEL INITIALIZATION WITH EXPLICIT NAMESPACE ──────────────────────
+// ─── SAFE MODEL INITIALIZATION WITH EXPLICIT NAMESPACES ─────────────────────
 // Syllabus Dataset Schema Configuration Layout
 const subjectSchema = new mongoose.Schema({
   semId: String,
@@ -42,7 +42,7 @@ const subjectSchema = new mongoose.Schema({
   code: String,
   credits: String,
   colorKey: String
-}, { collection: 'subjects' }); // ◄── Explicitly targets the core cloud collection table paths
+}, { collection: 'subjects' });
 
 const SubjectModel = mongoose.models.Subject || mongoose.model('Subject', subjectSchema);
 
@@ -53,9 +53,19 @@ const questionSchema = new mongoose.Schema({
   options: [String],
   answer: String,
   points: Number
-}, { collection: 'relax_trivia' }); // ◄── Forces a fresh collection path to bypass old cached blocks
+}, { collection: 'relax_trivia' });
 
 const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
+
+// PDF Notes Metadata Schema Configuration Layout
+const pdfNotesSchema = new mongoose.Schema({
+  title: String,
+  semester: Number,
+  subject: String,
+  s3Url: String
+}, { collection: 'pdf_notes' }); // ◄── Targets the exact collection seeded by seedPdfs.js
+
+const PdfNotes = mongoose.models.PdfNotes || mongoose.model('PdfNotes', pdfNotesSchema);
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 5. DYNAMIC API ROUTE: Queries your cloud database subject collection
@@ -64,7 +74,6 @@ app.get('/api/subjects/:semId', async (req, res) => {
   console.log(`📡 Fetching documents from Cloud Cluster for Semester: ${semId}`);
   
   try {
-    // 🛠️ CHANGED: Utilizing explicit namespace compilation model to bypass buffer locks
     const items = await SubjectModel.find({ semId: semId });
     res.status(200).json(items);
   } catch (error) {
@@ -85,11 +94,25 @@ app.get('/api/relax/trivia', async (req, res) => {
   }
 });
 
+// 5c. NEW DYNAMIC ROUTE: Serves your freshly seeded PDF notes by semester
+app.get('/api/notes/:semester', async (req, res) => {
+  const { semester } = req.params;
+  console.log(`📡 Fetching seeded PDF documents from Atlas for Semester: ${semester}`);
+  
+  try {
+    const notes = await PdfNotes.find({ semester: Number(semester) });
+    res.status(200).json(notes);
+  } catch (error) {
+    console.error("PDF Fetch Error:", error);
+    res.status(500).json({ error: "Failed to stream PDF datasets from cluster." });
+  }
+});
+
 // 6. DEVELOPER HELPER ROUTE: Seed sample records using a GET request
 app.get('/api/dev/seed', async (req, res) => {
   console.log("🚀 Seeding route triggered. Initializing cloud database wipe and write sequence...");
   try {
-    // Drop both collections clean to clear out bad states or mismatched constraints
+    // Drop collections clean to clear out bad states or mismatched constraints
     try {
       await SubjectModel.deleteMany({});
       console.log("✔ Old subjects collection wiped successfully.");
