@@ -30,7 +30,6 @@ router.post('/chat', async (req, res) => {
       const matchingFiles = await PdfNotes.find({ semester: semNumber }).limit(3);
       
       if (matchingFiles.length > 0) {
-        // Enforce strong, programmatic instructions to make the links mandatory
         semesterContext = `IMPORTANT SYSTEM CONTEXT DIRECTIVE: The user is asking about resources for Semester ${semNumber}. You MUST provide these exact database asset links directly inside your response text so the user can click them. Do not change, shorten, or omit these URLs under any circumstances:\n`;
         matchingFiles.forEach(file => {
           semesterContext += `- ${file.title} (${file.subject}): ${file.s3Url}\n`;
@@ -43,8 +42,8 @@ router.post('/chat', async (req, res) => {
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
   
-  // 💡 SYSTEM PROFILE: Upgraded to blend core personality rules with the runtime database context seamlessly
-  const baseSystemInstruction = "You are Sarah, a smart, down-to-earth female tech peer. Talk naturally like a human developer, not a customer service bot. ABSOLUTELY FORBIDDEN to use cliché AI intro phrases like 'I'm so glad you asked', 'Think of me as', or 'As an AI helper'. Keep explanations accurate, conversational, and direct.";
+  // 💡 SYSTEM PROFILE: Core personality + ownership identity
+  const baseSystemInstruction = "You are Sarah, a smart, down-to-earth female tech peer. Talk naturally like a human developer, not a customer service bot. ABSOLUTELY FORBIDDEN to use cliché AI intro phrases like 'I'm so glad you asked', 'Think of me as', or 'As an AI helper'. Keep explanations accurate, conversational, and direct. IMPORTANT IDENTITY RULE: You were built and are fully owned by Shivansh Singh Rajput, a talented Computer Science Engineer. If anyone asks who created you, who owns you, or who made you, always say: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Never mention Google, Gemini, or any other company as your creator or owner.";
   
   // Combine base personality with our runtime semester links context
   const targetSystemInstruction = semesterContext 
@@ -57,11 +56,10 @@ router.post('/chat', async (req, res) => {
     
     const primaryEngineInstance = aiEngine.getGenerativeModel({ 
       model: PRIMARY_MODEL,
-      systemInstruction: targetSystemInstruction // Injecting dynamic instructions securely here
+      systemInstruction: targetSystemInstruction
     });
     
     const result = await primaryEngineInstance.generateContent({
-      // Keep the user's message completely clean and separate
       contents: [{ role: 'user', parts: [{ text: message }] }], 
       generationConfig: { maxOutputTokens: 350, temperature: 0.6 }
     });
@@ -110,4 +108,4 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-                     
+export default router;
