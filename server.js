@@ -4,7 +4,6 @@ import BackendAiRouter from './BackendAiRouter.js';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import { Subject } from './Subject.js';
 
 // 1. Load environment configuration variables
 dotenv.config();
@@ -14,7 +13,6 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // 3. Middlewares
-// 💡 FIXED: Added your live Vercel link into the CORS array alongside local hosts
 app.use(cors({
   origin: [
     'http://localhost:3000', 
@@ -37,6 +35,18 @@ mongoose.connect(mongoURI, {
   .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
 // ─── SAFE MODEL INITIALIZATION WITH EXPLICIT NAMESPACE ──────────────────────
+// Syllabus Dataset Schema Configuration Layout
+const subjectSchema = new mongoose.Schema({
+  semId: String,
+  name: String,
+  code: String,
+  credits: String,
+  colorKey: String
+}, { collection: 'subjects' }); // ◄── Explicitly targets the core cloud collection table paths
+
+const SubjectModel = mongoose.models.Subject || mongoose.model('Subject', subjectSchema);
+
+// Relax Zone Technical Trivia Quiz Schema Configuration Layout
 const questionSchema = new mongoose.Schema({
   id: Number,
   question: String,
@@ -45,7 +55,6 @@ const questionSchema = new mongoose.Schema({
   points: Number
 }, { collection: 'relax_trivia' }); // ◄── Forces a fresh collection path to bypass old cached blocks
 
-// Compiled safely to prevent ReferenceErrors or collision crashes during runtime
 const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,7 +64,8 @@ app.get('/api/subjects/:semId', async (req, res) => {
   console.log(`📡 Fetching documents from Cloud Cluster for Semester: ${semId}`);
   
   try {
-    const items = await Subject.find({ semId: semId });
+    // 🛠️ CHANGED: Utilizing explicit namespace compilation model to bypass buffer locks
+    const items = await SubjectModel.find({ semId: semId });
     res.status(200).json(items);
   } catch (error) {
     console.error("Database Query Crash Error:", error);
@@ -81,7 +91,7 @@ app.get('/api/dev/seed', async (req, res) => {
   try {
     // Drop both collections clean to clear out bad states or mismatched constraints
     try {
-      await Subject.deleteMany({});
+      await SubjectModel.deleteMany({});
       console.log("✔ Old subjects collection wiped successfully.");
     } catch (e) { console.error("Wipe Subjects collection failed:", e); }
 
@@ -91,7 +101,7 @@ app.get('/api/dev/seed', async (req, res) => {
     } catch (e) { console.error("Wipe Trivia collection failed:", e); }
     
     // Seed Core Computer Science Syllabus Records
-    await Subject.insertMany([
+    await SubjectModel.insertMany([
       { semId: "1", name: "Engineering Mathematics-I", code: "MAS-101", credits: "4", colorKey: "blue" },
       { semId: "1", name: "Engineering Physics", code: "PHY-102", credits: "4", colorKey: "purple" },
       { semId: "1", name: "Basic Electrical Engineering", code: "EE-103", credits: "3", colorKey: "amber" },
@@ -143,5 +153,5 @@ app.get('/', (req, res) => {
 // 8. Start listening for traffic
 app.use('/api/ai', BackendAiRouter);
 app.listen(PORT, () => {
-  console.log(`🚀 API Microservice live on cloud port: ${PORT}`);
+  console.log("🚀 API Microservice live on cloud port:", PORT);
 });
