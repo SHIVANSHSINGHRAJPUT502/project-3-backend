@@ -1,6 +1,6 @@
-// server.js
 import express from 'express';
 import BackendAiRouter from './BackendAiRouter.js';
+import adminRouter from './adminRouter.js';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -13,7 +13,6 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // 3. Middlewares
-// 💡 FIXED: Expanded the CORS setup to explicitly authorize both your live Vercel deployments and Railway proxies
 app.use(cors({
   origin: [
     'http://localhost:3000', 
@@ -38,7 +37,6 @@ mongoose.connect(mongoURI, {
   .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
 // ─── SAFE MODEL INITIALIZATION WITH EXPLICIT NAMESPACES ─────────────────────
-// Syllabus Dataset Schema Configuration Layout
 const subjectSchema = new mongoose.Schema({
   semId: String,
   name: String,
@@ -49,7 +47,6 @@ const subjectSchema = new mongoose.Schema({
 
 const SubjectModel = mongoose.models.Subject || mongoose.model('Subject', subjectSchema);
 
-// Relax Zone Technical Trivia Quiz Schema Configuration Layout
 const questionSchema = new mongoose.Schema({
   id: Number,
   question: String,
@@ -60,7 +57,6 @@ const questionSchema = new mongoose.Schema({
 
 const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
 
-// PDF Notes Metadata Schema Configuration Layout
 const pdfNotesSchema = new mongoose.Schema({
   title: String,
   semester: Number,
@@ -71,11 +67,10 @@ const pdfNotesSchema = new mongoose.Schema({
 const PdfNotes = mongoose.models.PdfNotes || mongoose.model('PdfNotes', pdfNotesSchema);
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 5. DYNAMIC API ROUTE: Queries your cloud database subject collection
+// 5. API ROUTES
 app.get('/api/subjects/:semId', async (req, res) => {
   const { semId } = req.params;
   console.log(`📡 Fetching documents from Cloud Cluster for Semester: ${semId}`);
-  
   try {
     const items = await SubjectModel.find({ semId: semId });
     res.status(200).json(items);
@@ -85,9 +80,8 @@ app.get('/api/subjects/:semId', async (req, res) => {
   }
 });
 
-// 5b. CLOUD GAME ROUTE: Serves dynamic tech trivia questions straight from Atlas
 app.get('/api/relax/trivia', async (req, res) => {
-  console.log('实用 🎮 Relax Zone Event: Fetching cloud quiz questions from relax_trivia...');
+  console.log('🎮 Relax Zone Event: Fetching cloud quiz questions...');
   try {
     const quizSet = await Question.find({});
     res.status(200).json(quizSet);
@@ -97,11 +91,9 @@ app.get('/api/relax/trivia', async (req, res) => {
   }
 });
 
-// 5c. NEW DYNAMIC ROUTE: Serves your freshly seeded PDF notes by semester
 app.get('/api/notes/:semester', async (req, res) => {
   const { semester } = req.params;
-  console.log(`📡 Fetching seeded PDF documents from Atlas for Semester: ${semester}`);
-  
+  console.log(`📡 Fetching PDF documents from Atlas for Semester: ${semester}`);
   try {
     const notes = await PdfNotes.find({ semester: Number(semester) });
     res.status(200).json(notes);
@@ -111,21 +103,19 @@ app.get('/api/notes/:semester', async (req, res) => {
   }
 });
 
-// 6. DEVELOPER HELPER ROUTE: Seed sample records using a GET request
 app.get('/api/dev/seed', async (req, res) => {
-  console.log("🚀 Seeding route triggered. Initializing cloud database wipe and write sequence...");
+  console.log("🚀 Seeding route triggered...");
   try {
     try {
       await SubjectModel.deleteMany({});
-      console.log("✔ Old subjects collection wiped successfully.");
-    } catch (e) { console.error("Wipe Subjects collection failed:", e); }
+      console.log("✔ Old subjects collection wiped.");
+    } catch (e) { console.error("Wipe Subjects failed:", e); }
 
     try {
       await Question.deleteMany({});
-      console.log("✔ Old trivia collection wiped successfully.");
-    } catch (e) { console.error("Wipe Trivia collection failed:", e); }
+      console.log("✔ Old trivia collection wiped.");
+    } catch (e) { console.error("Wipe Trivia failed:", e); }
     
-    // Seed Core Computer Science Syllabus Records
     await SubjectModel.insertMany([
       { semId: "1", name: "Engineering Mathematics-I", code: "MAS-101", credits: "4", colorKey: "blue" },
       { semId: "1", name: "Engineering Physics", code: "PHY-102", credits: "4", colorKey: "purple" },
@@ -135,9 +125,7 @@ app.get('/api/dev/seed', async (req, res) => {
       { semId: "5", name: "Operating Systems", code: "CSE-303", credits: "4", colorKey: "purple" },
       { semId: "5", name: "Database Management Systems", code: "CSE-305", credits: "4", colorKey: "emerald" }
     ]);
-    console.log("✔ Syllabus data rows parsed and loaded onto remote nodes.");
 
-    // Seed Relax Zone Cloud-Native Computing Trivia Dataset
     await Question.insertMany([
       {
         id: 1,
@@ -161,22 +149,27 @@ app.get('/api/dev/seed', async (req, res) => {
         points: 10
       }
     ]);
-    console.log("✔ Relaxation Arena quiz cards parsed and loaded onto remote nodes.");
     
-    res.status(201).send("🚀 Database successfully seeded with original engineering course records and cloud trivia sets!");
+    res.status(201).send("🚀 Database successfully seeded!");
   } catch (err) {
-    console.error("Global Seeding operational process crashed:", err);
-    res.status(500).send(`Seeding failed internally: ${err.message}`);
+    console.error("Seeding crashed:", err);
+    res.status(500).send(`Seeding failed: ${err.message}`);
   }
 });
 
-// 7. Base Test Route
+// 6. Health check route
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// 7. Base route
 app.get('/', (req, res) => {
   res.send('StudyNexus API Gateway Layer Running Smoothly');
 });
 
-// 8. Start listening for traffic
+// 8. Routers
 app.use('/api/ai', BackendAiRouter);
+app.use('/api/admin', adminRouter);
+
+// 9. Start server
 app.listen(PORT, () => {
   console.log("🚀 API Microservice live on cloud port:", PORT);
 });
