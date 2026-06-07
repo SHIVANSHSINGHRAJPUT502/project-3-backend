@@ -13,11 +13,14 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // 3. Middlewares
+// 💡 FIXED: Expanded the CORS setup to explicitly authorize both your live Vercel deployments and Railway proxies
 app.use(cors({
   origin: [
     'http://localhost:3000', 
     'http://localhost:5173', 
-    'https://studynexus-psi.vercel.app'
+    'https://studynexus-psi.vercel.app',
+    'https://studynexus.vercel.app',
+    'https://project-3-backend-production-8932.up.railway.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
@@ -63,7 +66,7 @@ const pdfNotesSchema = new mongoose.Schema({
   semester: Number,
   subject: String,
   s3Url: String
-}, { collection: 'pdf_notes' }); // ◄── Targets the exact collection seeded by seedPdfs.js
+}, { collection: 'pdf_notes' }); 
 
 const PdfNotes = mongoose.models.PdfNotes || mongoose.model('PdfNotes', pdfNotesSchema);
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +115,6 @@ app.get('/api/notes/:semester', async (req, res) => {
 app.get('/api/dev/seed', async (req, res) => {
   console.log("🚀 Seeding route triggered. Initializing cloud database wipe and write sequence...");
   try {
-    // Drop collections clean to clear out bad states or mismatched constraints
     try {
       await SubjectModel.deleteMany({});
       console.log("✔ Old subjects collection wiped successfully.");
