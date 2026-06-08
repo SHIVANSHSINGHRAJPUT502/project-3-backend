@@ -1,9 +1,29 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import { v2 as cloudinary } from 'cloudinary';
+import multer from 'multer';
 import PdfNotes from './models/PdfNotes.js';
 import User from './models/User.js';
 
 const router = express.Router();
+
+// ── CLOUDINARY CONFIG ────────────────────────────
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// ── MULTER (memory storage) ──────────────────────
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') cb(null, true);
+    else cb(new Error('Only PDF files allowed'));
+  }
+});
 
 // ── AUTH MIDDLEWARE ──────────────────────────────
 const verifyAdmin = (req, res, next) => {
@@ -56,10 +76,51 @@ router.get('/pdfs', verifyAdmin, async (req, res) => {
   res.json(pdfs);
 });
 
+// Add PDF manually via URL
 router.post('/pdfs', verifyAdmin, async (req, res) => {
   const { title, semester, subject, s3Url } = req.body;
   const pdf = await PdfNotes.create({ title, semester, subject, s3Url });
   res.status(201).json(pdf);
+});
+
+// Upload PDF file → Cloudinary → save URL in MongoDB
+router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
+  try {
+    const { title, semester, subject } = req.body;
+
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
+
+    // Upload buffer to Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'raw',
+          folder: 'studynexus/pdfs',
+          public_id: `sem${semester}_${Date.now()}`,
+          format: 'pdf'
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file.buffer);
+    });
+
+    // Save to MongoDB
+    const pdf = await PdfNotes.create({
+      title,
+      semester: Number(semester),
+      subject,
+      s3Url: uploadResult.secure_url
+    });
+
+    res.status(201).json(pdf);
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.delete('/pdfs/:id', verifyAdmin, async (req, res) => {
