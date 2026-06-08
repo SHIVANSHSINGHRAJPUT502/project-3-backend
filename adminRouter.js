@@ -89,7 +89,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'auto',
+          resource_type: 'raw',
           folder: 'studynexus/pdfs',
           public_id: `sem${semester}_${Date.now()}`,
           access_mode: 'public',
