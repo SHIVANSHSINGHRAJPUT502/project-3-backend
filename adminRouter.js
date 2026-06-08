@@ -107,7 +107,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       title,
       semester: Number(semester),
       subject,
-      s3Url: uploadResult.secure_url,
+      s3Url: uploadResult.secure_url.replace('/upload/', '/upload/fl_attachment:false/'),
     });
 
     res.status(201).json(pdf);
