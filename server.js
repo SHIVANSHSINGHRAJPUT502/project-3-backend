@@ -1,6 +1,7 @@
 import express from 'express';
 import BackendAiRouter from './BackendAiRouter.js';
 import adminRouter from './adminRouter.js';
+import PdfNotes from './models/PdfNotes.js';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -66,6 +67,15 @@ app.get('/api/relax/trivia', async (req, res) => {
     res.status(200).json(quizSet);
   } catch (error) {
     res.status(500).json({ error: "Internal Cloud Routing Failure" });
+  }
+});
+
+app.get('/api/notes/:semester', async (req, res) => {
+  try {
+    const notes = await PdfNotes.find({ semester: Number(req.params.semester) });
+    res.status(200).json(notes);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch PDFs" });
   }
 });
 

@@ -8,4 +8,4 @@ const PdfNotesSchema = new mongoose.Schema({
   uploadedAt: { type: Date, default: Date.now }
 });
 
-export default mongoose.model('PdfNotes', PdfNotesSchema, 'pdfnotes');
+export default mongoose.model('PdfNotes', PdfNotesSchema, 'pdf_notes');
