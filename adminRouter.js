@@ -89,10 +89,9 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'image',
+          resource_type: 'raw',
           folder: 'studynexus/pdfs',
-          public_id: `sem${semester}_${Date.now()}`,
-          format: 'pdf',
+          public_id: `sem${semester}_${Date.now()}.pdf`,
           access_mode: 'public',
         },
         (error, result) => {
@@ -107,7 +106,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       title,
       semester: Number(semester),
       subject,
-      s3Url: uploadResult.secure_url.replace('/upload/', '/upload/fl_attachment:false/'),
+      s3Url: uploadResult.secure_url,
     });
 
     res.status(201).json(pdf);
