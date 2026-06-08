@@ -7,14 +7,12 @@ import User from './models/User.js';
 
 const router = express.Router();
 
-// ── CLOUDINARY CONFIG ────────────────────────────
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ── MULTER (memory storage) ──────────────────────
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
@@ -25,7 +23,6 @@ const upload = multer({
   }
 });
 
-// ── AUTH MIDDLEWARE ──────────────────────────────
 const verifyAdmin = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
@@ -37,7 +34,6 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
-// ── LOGIN ────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -50,7 +46,6 @@ router.post('/login', (req, res) => {
   res.status(401).json({ error: 'Invalid credentials' });
 });
 
-// ── STATS ────────────────────────────────────────
 router.get('/stats', verifyAdmin, async (req, res) => {
   const [users, pdfs] = await Promise.all([
     User.countDocuments(),
@@ -59,7 +54,6 @@ router.get('/stats', verifyAdmin, async (req, res) => {
   res.json({ users, pdfs });
 });
 
-// ── USERS ────────────────────────────────────────
 router.get('/users', verifyAdmin, async (req, res) => {
   const users = await User.find({}, '-password');
   res.json(users);
@@ -70,13 +64,11 @@ router.delete('/users/:id', verifyAdmin, async (req, res) => {
   res.json({ message: 'User deleted' });
 });
 
-// ── PDFS ─────────────────────────────────────────
 router.get('/pdfs', verifyAdmin, async (req, res) => {
   const pdfs = await PdfNotes.find({});
   res.json(pdfs);
 });
 
-// Add PDF manually via URL
 router.post('/pdfs', verifyAdmin, async (req, res) => {
   try {
     const { title, semester, subject, s3Url } = req.body;
@@ -87,7 +79,6 @@ router.post('/pdfs', verifyAdmin, async (req, res) => {
   }
 });
 
-// Upload PDF file → Cloudinary → save URL in MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
     const { title, semester, subject } = req.body;
@@ -98,11 +89,10 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'raw',
+          resource_type: 'image',
           folder: 'studynexus/pdfs',
           public_id: `sem${semester}_${Date.now()}`,
           format: 'pdf',
-          type: 'upload',
           access_mode: 'public',
         },
         (error, result) => {
@@ -113,14 +103,11 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
-    // Convert URL to Google Docs viewer URL for browser viewing
-    const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(uploadResult.secure_url)}&embedded=true`;
-
     const pdf = await PdfNotes.create({
       title,
       semester: Number(semester),
       subject,
-      s3Url: viewerUrl
+      s3Url: uploadResult.secure_url,
     });
 
     res.status(201).json(pdf);
@@ -135,7 +122,6 @@ router.delete('/pdfs/:id', verifyAdmin, async (req, res) => {
   res.json({ message: 'PDF deleted' });
 });
 
-// ── SEED ─────────────────────────────────────────
 router.post('/seed', verifyAdmin, async (req, res) => {
   res.json({ message: 'Hit /api/dev/seed to trigger seeding' });
 });
