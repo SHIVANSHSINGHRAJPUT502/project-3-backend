@@ -69,19 +69,27 @@ router.get('/pdfs', verifyAdmin, async (req, res) => {
   res.json(pdfs);
 });
 
+// Add PDF manually via URL
 router.post('/pdfs', verifyAdmin, async (req, res) => {
   try {
-    const { title, semester, subject, s3Url } = req.body;
-    const pdf = await PdfNotes.create({ title, semester, subject, s3Url });
+    const { title, semester, subject, type, s3Url } = req.body;
+    const pdf = await PdfNotes.create({
+      title,
+      semester: Number(semester),
+      subject,
+      type: type || 'notes',
+      s3Url
+    });
     res.status(201).json(pdf);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// Upload PDF file → Cloudinary → save URL in MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
-    const { title, semester, subject } = req.body;
+    const { title, semester, subject, type } = req.body;
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
@@ -106,6 +114,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       title,
       semester: Number(semester),
       subject,
+      type: type || 'notes',
       s3Url: uploadResult.secure_url,
     });
 

@@ -125,6 +125,7 @@ app.get('/api/dev/seed', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/ai/health', (req, res) => res.json({ status: 'ok' })); // ← ADD THIS
 app.get('/', (req, res) => res.send('StudyNexus API Gateway Layer Running Smoothly'));
 
 app.use('/api/ai', BackendAiRouter);
