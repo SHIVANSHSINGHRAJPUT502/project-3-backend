@@ -16,9 +16,9 @@ cloudinary.config({
 
 // ── MULTER (memory storage) ──────────────────────
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') cb(null, true);
     else cb(new Error('Only PDF files allowed'));
@@ -78,9 +78,13 @@ router.get('/pdfs', verifyAdmin, async (req, res) => {
 
 // Add PDF manually via URL
 router.post('/pdfs', verifyAdmin, async (req, res) => {
-  const { title, semester, subject, s3Url } = req.body;
-  const pdf = await PdfNotes.create({ title, semester, subject, s3Url });
-  res.status(201).json(pdf);
+  try {
+    const { title, semester, subject, s3Url } = req.body;
+    const pdf = await PdfNotes.create({ title, semester, subject, s3Url });
+    res.status(201).json(pdf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Upload PDF file → Cloudinary → save URL in MongoDB
@@ -91,14 +95,15 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
 
-    // Upload buffer to Cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
           resource_type: 'raw',
           folder: 'studynexus/pdfs',
           public_id: `sem${semester}_${Date.now()}`,
-          format: 'pdf'
+          format: 'pdf',
+          type: 'upload',
+          access_mode: 'public',
         },
         (error, result) => {
           if (error) reject(error);
@@ -108,12 +113,14 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
-    // Save to MongoDB
+    // Convert URL to Google Docs viewer URL for browser viewing
+    const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(uploadResult.secure_url)}&embedded=true`;
+
     const pdf = await PdfNotes.create({
       title,
       semester: Number(semester),
       subject,
-      s3Url: uploadResult.secure_url
+      s3Url: viewerUrl
     });
 
     res.status(201).json(pdf);
