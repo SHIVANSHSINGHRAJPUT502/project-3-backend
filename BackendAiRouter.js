@@ -2,7 +2,6 @@
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import PdfNotes from './models/PdfNotes.js';
-import fetch from 'node-fetch';
 
 const router = express.Router();
 
