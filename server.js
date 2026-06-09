@@ -31,16 +31,7 @@ mongoose.connect(process.env.MONGO_URI, {
   .then(() => console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!'))
   .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
-// ─── MODELS ──────────────────────────────────────────────────────────────────
-const subjectSchema = new mongoose.Schema({
-  semId: String,
-  name: String,
-  code: String,
-  credits: String,
-  colorKey: String
-}, { collection: 'subjects' });
-const SubjectModel = mongoose.models.Subject || mongoose.model('Subject', subjectSchema);
-
+// ─── Trivia (kept as-is) ──────────────────────────────────────────────────────
 const questionSchema = new mongoose.Schema({
   id: Number,
   question: String,
@@ -49,18 +40,39 @@ const questionSchema = new mongoose.Schema({
   points: Number
 }, { collection: 'relax_trivia' });
 const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
+
+// ✅ Subjects derived from uploaded PDFs — no subjects collection needed
+// Returns distinct subject names that have at least 1 PDF uploaded for this semester
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
-    const items = await SubjectModel.find({ semId: req.params.semId });
-    res.status(200).json(items);
+    const subjects = await PdfNotes.distinct('subject', {
+      semester: Number(req.params.semId)
+    });
+    res.status(200).json(subjects); // returns plain array of strings e.g. ["Machine Learning", "Cloud Computing"]
   } catch (error) {
-    res.status(500).json({ error: "Internal Database Server Error" });
+    res.status(500).json({ error: "Failed to fetch subjects" });
   }
 });
 
+// ✅ Fetch PDFs by semester + subject + type
+// e.g. GET /api/notes/6/Machine Learning/notes
+app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
+  try {
+    const { semester, subject, type } = req.params;
+    const pdfs = await PdfNotes.find({
+      semester: Number(semester),
+      subject: decodeURIComponent(subject),
+      type: type
+    }).sort({ uploadedAt: -1 });
+    res.status(200).json(pdfs);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch PDFs" });
+  }
+});
+
+// ✅ Trivia route (unchanged)
 app.get('/api/relax/trivia', async (req, res) => {
   try {
     const quizSet = await Question.find({});
@@ -70,29 +82,10 @@ app.get('/api/relax/trivia', async (req, res) => {
   }
 });
 
-app.get('/api/notes/:semester', async (req, res) => {
-  try {
-    const notes = await PdfNotes.find({ semester: Number(req.params.semester) });
-    res.status(200).json(notes);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch PDFs" });
-  }
-});
-
+// ✅ Seed only trivia now (subjects no longer need seeding)
 app.get('/api/dev/seed', async (req, res) => {
   try {
-    await SubjectModel.deleteMany({});
     await Question.deleteMany({});
-
-    await SubjectModel.insertMany([
-      { semId: "1", name: "Engineering Mathematics-I", code: "MAS-101", credits: "4", colorKey: "blue" },
-      { semId: "1", name: "Engineering Physics", code: "PHY-102", credits: "4", colorKey: "purple" },
-      { semId: "1", name: "Basic Electrical Engineering", code: "EE-103", credits: "3", colorKey: "amber" },
-      { semId: "1", name: "Programming for Problem Solving", code: "CSE-104", credits: "4", colorKey: "emerald" },
-      { semId: "5", name: "Computer Networks", code: "CSE-301", credits: "4", colorKey: "blue" },
-      { semId: "5", name: "Operating Systems", code: "CSE-303", credits: "4", colorKey: "purple" },
-      { semId: "5", name: "Database Management Systems", code: "CSE-305", credits: "4", colorKey: "emerald" }
-    ]);
 
     await Question.insertMany([
       {
@@ -118,14 +111,14 @@ app.get('/api/dev/seed', async (req, res) => {
       }
     ]);
 
-    res.status(201).send("🚀 Database successfully seeded!");
+    res.status(201).send("🚀 Trivia seeded successfully!");
   } catch (err) {
     res.status(500).send(`Seeding failed: ${err.message}`);
   }
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
-app.get('/api/ai/health', (req, res) => res.json({ status: 'ok' })); // ← ADD THIS
+app.get('/api/ai/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.send('StudyNexus API Gateway Layer Running Smoothly'));
 
 app.use('/api/ai', BackendAiRouter);
