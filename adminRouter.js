@@ -34,6 +34,7 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
+// ── Login ─────────────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -46,6 +47,7 @@ router.post('/login', (req, res) => {
   res.status(401).json({ error: 'Invalid credentials' });
 });
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
 router.get('/stats', verifyAdmin, async (req, res) => {
   const [users, pdfs] = await Promise.all([
     User.countDocuments(),
@@ -54,6 +56,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
   res.json({ users, pdfs });
 });
 
+// ── Users ─────────────────────────────────────────────────────────────────────
 router.get('/users', verifyAdmin, async (req, res) => {
   const users = await User.find({}, '-password');
   res.json(users);
@@ -64,6 +67,7 @@ router.delete('/users/:id', verifyAdmin, async (req, res) => {
   res.json({ message: 'User deleted' });
 });
 
+// ── PDFs ──────────────────────────────────────────────────────────────────────
 router.get('/pdfs', verifyAdmin, async (req, res) => {
   const pdfs = await PdfNotes.find({});
   res.json(pdfs);
@@ -89,7 +93,12 @@ router.post('/pdfs', verifyAdmin, async (req, res) => {
 // Upload PDF file → Cloudinary → save URL in MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
-    const { title, semester, subject, type } = req.body;
+    const title = req.body.title;
+    const semester = req.body.semester;
+    const subject = req.body.subject;
+    const type = req.body.type || 'notes'; // ← force fallback to notes
+
+    console.log("REQ BODY:", req.body); // ← debug log (remove after fixing)
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
@@ -114,7 +123,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       title,
       semester: Number(semester),
       subject,
-      type: type || 'notes',
+      type,
       s3Url: uploadResult.secure_url,
     });
 
