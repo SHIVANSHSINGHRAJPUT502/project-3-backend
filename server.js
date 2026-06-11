@@ -31,7 +31,7 @@ mongoose.connect(process.env.MONGO_URI, {
   .then(() => console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!'))
   .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
-// ─── Trivia (kept as-is) ──────────────────────────────────────────────────────
+// ─── Trivia Schema Configuration ─────────────────────────────────────────────
 const questionSchema = new mongoose.Schema({
   id: Number,
   question: String,
@@ -43,36 +43,41 @@ const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', qu
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 
-// ✅ Subjects derived from uploaded PDFs — no subjects collection needed
-// Returns distinct subject names that have at least 1 PDF uploaded for this semester
+// ✅ Subjects derived from uploaded PDFs — returns distinct subject names
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
     const subjects = await PdfNotes.distinct('subject', {
       semester: Number(req.params.semId)
     });
-    res.status(200).json(subjects); // returns plain array of strings e.g. ["Machine Learning", "Cloud Computing"]
+    res.status(200).json(subjects);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch subjects" });
   }
 });
 
-// ✅ Fetch PDFs by semester + subject + type
-// e.g. GET /api/notes/6/Machine Learning/notes
+// ✅ Fetch PDFs by semester + subject + type (With safety fallback parameters)
 app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
   try {
     const { semester, subject, type } = req.params;
-    const pdfs = await PdfNotes.find({
+    
+    // Safety check query builder to avoid field evaluation crashes if type is missing
+    const query = {
       semester: Number(semester),
-      subject: decodeURIComponent(subject),
-      type: type
-    }).sort({ uploadedAt: -1 });
+      subject: decodeURIComponent(subject)
+    };
+    
+    if (type && type !== 'undefined' && type !== 'null') {
+      query.type = type;
+    }
+
+    const pdfs = await PdfNotes.find(query).sort({ uploadedAt: -1 });
     res.status(200).json(pdfs);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch PDFs" });
   }
 });
 
-// ✅ Trivia route (unchanged)
+// ✅ Trivia route
 app.get('/api/relax/trivia', async (req, res) => {
   try {
     const quizSet = await Question.find({});
@@ -82,7 +87,7 @@ app.get('/api/relax/trivia', async (req, res) => {
   }
 });
 
-// ✅ Seed only trivia now (subjects no longer need seeding)
+// ✅ Seed endpoint for local/dev dataset generation
 app.get('/api/dev/seed', async (req, res) => {
   try {
     await Question.deleteMany({});
@@ -123,6 +128,15 @@ app.get('/', (req, res) => res.send('StudyNexus API Gateway Layer Running Smooth
 
 app.use('/api/ai', BackendAiRouter);
 app.use('/api/admin', adminRouter);
+
+// ─── HEAL DEPLOYMENT THREAD RUNTIME CRASHES ──────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️ Detached System Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Critical Application Uncaught Exception thrown:', err);
+});
 
 app.listen(PORT, () => {
   console.log("🚀 API Microservice live on cloud port:", PORT);
