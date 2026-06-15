@@ -88,33 +88,45 @@ router.post('/chat', async (req, res) => {
     return res.json({ reply: aiTextOutput, modelUsed: PRIMARY_MODEL });
 
   } catch (primaryError) {
+    // 🛡️ CRITICAL ADJUSTMENT: Detect both 429 (Quota) AND 503 (High Demand Service Outage)
     const isQuotaCrash = primaryError.status === 429 ||
       (primaryError.message && primaryError.message.includes('429')) ||
       (primaryError.message && primaryError.message.toLowerCase().includes('quota'));
 
-    if (isQuotaCrash) {
-      console.warn(`⚠️ SYSTEM NOTICE: ${PRIMARY_MODEL} rate-limited! Deploying backup model...`);
+    const isServiceUnavailable = primaryError.status === 503 ||
+      (primaryError.message && primaryError.message.includes('503')) ||
+      (primaryError.message && primaryError.message.toLowerCase().includes('unavailable'));
+
+    // If Google throttles us OR drops the ball with high demand, activate the fallback flow
+    if (isQuotaCrash || isServiceUnavailable) {
+      const reason = isQuotaCrash ? "rate-limited" : "overloaded (503)";
+      console.warn(`⚠️ SYSTEM NOTICE: ${PRIMARY_MODEL} is ${reason}! Deploying backup model...`);
+      
       try {
         console.log(`📡 Re-routing to Fallback Model: ${FALLBACK_MODEL}`);
         const fallbackEngineInstance = aiEngine.getGenerativeModel({
           model: FALLBACK_MODEL,
           systemInstruction: targetSystemInstruction
         });
+        
         const fallbackResult = await fallbackEngineInstance.generateContent({
           contents: [{ role: 'user', parts: [{ text: message }] }],
           generationConfig: { maxOutputTokens: 400, temperature: 0.55 }
         });
+        
         const fallbackTextOutput = fallbackResult.response.text();
         return res.json({ reply: fallbackTextOutput, modelUsed: FALLBACK_MODEL });
+        
       } catch (fallbackError) {
-        console.error("🚨 CRITICAL: All AI pipelines exhausted.");
-        return res.status(429).json({
-          error: "All free AI pipelines are temporarily saturated.",
-          details: "Our daily limit resets automatically tomorrow at 12:30 PM IST!"
+        console.error("🚨 CRITICAL: All AI pipelines exhausted due to API demand.");
+        return res.status(503).json({
+          reply: "Hey! My high-speed AI cores are currently facing massive traffic spikes from the core servers right now. Can you try sending that message again in a few seconds, bro?",
+          error: "All free AI pipelines are temporarily saturated."
         });
       }
     }
 
+    // Tracker for any completely unrelated system crashes (like missing parameters)
     console.error("======== GENERAL GOOGLE API CRASH TRACKER ========");
     console.error(primaryError);
     return res.status(500).json({ error: "Internal processing breakdown.", details: primaryError.message });
