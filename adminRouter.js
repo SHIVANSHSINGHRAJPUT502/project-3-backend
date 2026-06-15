@@ -1,13 +1,11 @@
-// adminRouter.js
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
+import PdfNotes from './models/PdfNotes.js';
+import User from './models/User.js';
 
 const router = express.Router();
-const DATA_FILE = path.resolve('./data.json');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -25,15 +23,6 @@ const upload = multer({
   }
 });
 
-const getLocalData = () => {
-  if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({ pdfs: [] }, null, 2));
-  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-};
-
-const saveLocalData = (data) => {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-};
-
 const verifyAdmin = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
@@ -48,7 +37,10 @@ const verifyAdmin = (req, res, next) => {
 // ── Login ─────────────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
-  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
+  if (
+    username === process.env.ADMIN_USERNAME &&
+    password === process.env.ADMIN_PASSWORD
+  ) {
     const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '8h' });
     return res.json({ token });
   }
@@ -56,49 +48,57 @@ router.post('/login', (req, res) => {
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
-router.get('/stats', verifyAdmin, (req, res) => {
-  const data = getLocalData();
-  res.json({ users: 0, pdfs: data.pdfs.length });
+router.get('/stats', verifyAdmin, async (req, res) => {
+  const [users, pdfs] = await Promise.all([
+    User.countDocuments(),
+    PdfNotes.countDocuments()
+  ]);
+  res.json({ users, pdfs });
 });
 
-// ── Get All PDFs in Admin Dashboard ───────────────────────────────────────────
-router.get('/pdfs', verifyAdmin, (req, res) => {
-  const data = getLocalData();
-  res.json(data.pdfs);
+// ── Users ─────────────────────────────────────────────────────────────────────
+router.get('/users', verifyAdmin, async (req, res) => {
+  const users = await User.find({}, '-password');
+  res.json(users);
 });
 
-// ── Add PDF Manually via URL (🟢 NOW GENERATES MONGO-STYLE _id) ───────────────
-router.post('/pdfs', verifyAdmin, (req, res) => {
+router.delete('/users/:id', verifyAdmin, async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.json({ message: 'User deleted' });
+});
+
+// ── PDFs ──────────────────────────────────────────────────────────────────────
+router.get('/pdfs', verifyAdmin, async (req, res) => {
+  const pdfs = await PdfNotes.find({});
+  res.json(pdfs);
+});
+
+// Add PDF manually via URL
+router.post('/pdfs', verifyAdmin, async (req, res) => {
   try {
     const { title, semester, subject, type, s3Url } = req.body;
-    const data = getLocalData();
-
-    // Generate a hex-style 24-character random string to mock MongoDB ObjectId
-    const fakeObjectId = [...Array(24)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
-
-    const newPdf = {
-      _id: fakeObjectId, // ✅ Mimicking MongoDB native identifier
+    const pdf = await PdfNotes.create({
       title,
       semester: Number(semester),
       subject,
       type: type || 'notes',
-      s3Url,
-      uploadedAt: new Date().toISOString()
-    };
-
-    data.pdfs.push(newPdf);
-    saveLocalData(data);
-
-    res.status(201).json(newPdf);
+      s3Url
+    });
+    res.status(201).json(pdf);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Upload PDF file → Cloudinary → Save into Local JSON DB ────────────────────
+// Upload PDF file → Cloudinary → save URL in MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
-    const { title, semester, subject, type = 'notes' } = req.body;
+    const title = req.body.title;
+    const semester = req.body.semester;
+    const subject = req.body.subject;
+    const type = req.body.type || 'notes'; // ← force fallback to notes
+
+    console.log("REQ BODY:", req.body); // ← debug log (remove after fixing)
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
@@ -119,35 +119,28 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
-    const data = getLocalData();
-    const fakeObjectId = [...Array(24)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
-
-    const newPdf = {
-      _id: fakeObjectId, // ✅ Mimicking MongoDB native identifier
+    const pdf = await PdfNotes.create({
       title,
       semester: Number(semester),
       subject,
       type,
       s3Url: uploadResult.secure_url,
-      uploadedAt: new Date().toISOString()
-    };
+    });
 
-    data.pdfs.push(newPdf);
-    saveLocalData(data);
-
-    res.status(201).json(newPdf);
+    res.status(201).json(pdf);
   } catch (err) {
     console.error('Upload error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Delete PDF ────────────────────────────────────────────────────────────────
-router.delete('/pdfs/:id', verifyAdmin, (req, res) => {
-  const data = getLocalData();
-  data.pdfs = data.pdfs.filter(pdf => pdf._id !== req.params.id); // ✅ Checks against _id
-  saveLocalData(data);
-  res.json({ message: 'PDF completely deleted from memory file' });
+router.delete('/pdfs/:id', verifyAdmin, async (req, res) => {
+  await PdfNotes.findByIdAndDelete(req.params.id);
+  res.json({ message: 'PDF deleted' });
+});
+
+router.post('/seed', verifyAdmin, async (req, res) => {
+  res.json({ message: 'Hit /api/dev/seed to trigger seeding' });
 });
 
 export default router;

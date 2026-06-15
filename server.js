@@ -1,8 +1,9 @@
-// server.js
 import express from 'express';
 import BackendAiRouter from './BackendAiRouter.js';
 import adminRouter from './adminRouter.js';
+import PdfNotes from './models/PdfNotes.js';
 import cors from 'cors';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -23,70 +24,107 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ─── STATIC MEMORY DATA REGISTRY (Bypassing MongoDB Completely) ──────────────
-const STATIC_SEMESTER_DATA = {
-  1: ["Engineering Mathematics-I", "Physics", "Manufacturing Processes", "Communication Skills"],
-  2: ["Engineering Mathematics-II", "Chemistry", "Programming in C", "Electrical Engineering"],
-  3: ["Data Structures", "Discrete Mathematics", "Digital Electronics", "Object Oriented Programming"],
-  4: ["Operating Systems", "Database Management Systems", "Computer Architecture", "Python Programming"],
-  5: ["Computer Networks", "Formal Languages & Automata", "Design & Analysis of Algorithms", "Cyber Security"],
-  6: ["Software Engineering", "Compiler Design", "Web Development", "Artificial Intelligence"]
-};
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
+  .then(() => console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!'))
+  .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
 
-// Mock trivia questions for your Relax Zone game
-const STATIC_TRIVIA_DATA = [
-  {
-    id: 1,
-    question: "Which cloud service model provides virtualization, raw computing shards, storage, and low-level networking engines natively?",
-    options: ["SaaS", "PaaS", "IaaS", "Serverless Architecture"],
-    answer: "IaaS",
-    points: 10
-  },
-  {
-    id: 2,
-    question: "What specific type of lookup layer does the 'mongodb+srv://' connection prefix rely on to track multiple cluster shards?",
-    options: ["A Record Lookup", "CNAME Record Multi-Map", "DNS SRV Record Lookup", "MX Mailing Record Routing"],
-    answer: "DNS SRV Record Lookup",
-    points: 15
-  },
-  {
-    id: 3,
-    question: "In distributed cloud database models, what system behaviors are balanced according to the foundational CAP Theorem?",
-    options: ["Caching, API Validation, Port Isolation", "Consistency, Availability, Partition tolerance", "Concurrency, Allocation Matrix, Performance Tuning", "Clusters, Active Backups, Packet Switching"],
-    answer: "Consistency, Availability, Partition tolerance",
-    points: 10
-  }
-];
+// ─── Trivia Schema Configuration ─────────────────────────────────────────────
+const questionSchema = new mongoose.Schema({
+  id: Number,
+  question: String,
+  options: [String],
+  answer: String,
+  points: Number
+}, { collection: 'relax_trivia' });
+const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 
-// ✅ Subjects derived from static memory array instantly
-app.get('/api/subjects/:semId', (req, res) => {
-  const semId = req.params.semId;
-  const subjects = STATIC_SEMESTER_DATA[semId] || [];
-  res.status(200).json(subjects);
+// ✅ Subjects derived from uploaded PDFs — returns distinct subject names
+app.get('/api/subjects/:semId', async (req, res) => {
+  try {
+    const subjects = await PdfNotes.distinct('subject', {
+      semester: Number(req.params.semId)
+    });
+    res.status(200).json(subjects);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch subjects" });
+  }
 });
 
-// ✅ Fetch PDFs placeholder (Returns empty or mocked papers layout to prevent crash)
-app.get('/api/notes/:semester/:subject/:type', (req, res) => {
-  // Since we are running in standalone static memory, we return an empty array 
-  // or you can fill this with your direct static file links if needed.
-  res.status(200).json([]);
+// ✅ Fetch PDFs by semester + subject + type (With safety fallback parameters)
+app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
+  try {
+    const { semester, subject, type } = req.params;
+    
+    // Safety check query builder to avoid field evaluation crashes if type is missing
+    const query = {
+      semester: Number(semester),
+      subject: decodeURIComponent(subject)
+    };
+    
+    if (type && type !== 'undefined' && type !== 'null') {
+      query.type = type;
+    }
+
+    const pdfs = await PdfNotes.find(query).sort({ uploadedAt: -1 });
+    res.status(200).json(pdfs);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch PDFs" });
+  }
 });
 
-// ✅ Trivia route serving instantly from application memory
-app.get('/api/relax/trivia', (req, res) => {
-  res.status(200).json(STATIC_TRIVIA_DATA);
+// ✅ Trivia route
+app.get('/api/relax/trivia', async (req, res) => {
+  try {
+    const quizSet = await Question.find({});
+    res.status(200).json(quizSet);
+  } catch (error) {
+    res.status(500).json({ error: "Internal Cloud Routing Failure" });
+  }
 });
 
-// Deprecated seed route (No database to seed anymore, keeps endpoint safe)
-app.get('/api/dev/seed', (req, res) => {
-  res.status(200).send("🚀 System running in memory storage mode. Database seeding bypassed.");
+// ✅ Seed endpoint for local/dev dataset generation
+app.get('/api/dev/seed', async (req, res) => {
+  try {
+    await Question.deleteMany({});
+
+    await Question.insertMany([
+      {
+        id: 1,
+        question: "Which cloud service model provides virtualization, raw computing shards, storage, and low-level networking engines natively?",
+        options: ["SaaS", "PaaS", "IaaS", "Serverless Architecture"],
+        answer: "IaaS",
+        points: 10
+      },
+      {
+        id: 2,
+        question: "What specific type of lookup layer does the 'mongodb+srv://' connection prefix rely on to track multiple cluster shards?",
+        options: ["A Record Lookup", "CNAME Record Multi-Map", "DNS SRV Record Lookup", "MX Mailing Record Routing"],
+        answer: "DNS SRV Record Lookup",
+        points: 15
+      },
+      {
+        id: 3,
+        question: "In distributed cloud database models, what system behaviors are balanced according to the foundational CAP Theorem?",
+        options: ["Caching, API Validation, Port Isolation", "Consistency, Availability, Partition tolerance", "Concurrency, Allocation Matrix, Performance Tuning", "Clusters, Active Backups, Packet Switching"],
+        answer: "Consistency, Availability, Partition tolerance",
+        points: 10
+      }
+    ]);
+
+    res.status(201).send("🚀 Trivia seeded successfully!");
+  } catch (err) {
+    res.status(500).send(`Seeding failed: ${err.message}`);
+  }
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ai/health', (req, res) => res.json({ status: 'ok' }));
-app.get('/', (req, res) => res.send('StudyNexus API Gateway Layer Running Smoothly in Static Mode'));
+app.get('/', (req, res) => res.send('StudyNexus API Gateway Layer Running Smoothly'));
 
 app.use('/api/ai', BackendAiRouter);
 app.use('/api/admin', adminRouter);
@@ -101,5 +139,5 @@ process.on('uncaughtException', (err) => {
 });
 
 app.listen(PORT, () => {
-  console.log("🚀 API Microservice live on cloud port in static mode:", PORT);
+  console.log("🚀 API Microservice live on cloud port:", PORT);
 });
