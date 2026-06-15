@@ -3,8 +3,11 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
+const DATA_FILE = path.resolve('./data.json');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -22,6 +25,15 @@ const upload = multer({
   }
 });
 
+const getLocalData = () => {
+  if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({ pdfs: [] }, null, 2));
+  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+};
+
+const saveLocalData = (data) => {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+};
+
 const verifyAdmin = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
@@ -33,44 +45,57 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
-// ── Login (🟢 KEPT PERFECTLY ACTIVE FOR YOU) ──────────────────────────────────
+// ── Login ─────────────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
-  if (
-    username === process.env.ADMIN_USERNAME &&
-    password === process.env.ADMIN_PASSWORD
-  ) {
+  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
     const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '8h' });
     return res.json({ token });
   }
   res.status(401).json({ error: 'Invalid credentials' });
 });
 
-// ── Stats (Modified to show clean static indicator numbers) ───────────────────
+// ── Stats ─────────────────────────────────────────────────────────────────────
 router.get('/stats', verifyAdmin, (req, res) => {
-  res.json({ users: 0, pdfs: 24 }); // Hardcoded metrics to keep frontend charts happy
+  const data = getLocalData();
+  res.json({ users: 0, pdfs: data.pdfs.length });
 });
 
-// ── Users (Returns empty list safely) ─────────────────────────────────────────
-router.get('/users', verifyAdmin, (req, res) => {
-  res.json([]);
-});
-
-router.delete('/users/:id', verifyAdmin, (req, res) => {
-  res.json({ message: 'User deleted (Static Mode)' });
-});
-
-// ── PDFs (Returns static empty registry) ──────────────────────────────────────
+// ── Get All PDFs in Admin Dashboard ───────────────────────────────────────────
 router.get('/pdfs', verifyAdmin, (req, res) => {
-  res.json([]);
+  const data = getLocalData();
+  res.json(data.pdfs);
 });
 
-// Add PDF manually via URL placeholder
+// ── Add PDF Manually via URL (🟢 NOW GENERATES MONGO-STYLE _id) ───────────────
 router.post('/pdfs', verifyAdmin, (req, res) => {
-  res.status(201).json({ message: "Static mode active. Document registration bypassed." });
+  try {
+    const { title, semester, subject, type, s3Url } = req.body;
+    const data = getLocalData();
+
+    // Generate a hex-style 24-character random string to mock MongoDB ObjectId
+    const fakeObjectId = [...Array(24)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+
+    const newPdf = {
+      _id: fakeObjectId, // ✅ Mimicking MongoDB native identifier
+      title,
+      semester: Number(semester),
+      subject,
+      type: type || 'notes',
+      s3Url,
+      uploadedAt: new Date().toISOString()
+    };
+
+    data.pdfs.push(newPdf);
+    saveLocalData(data);
+
+    res.status(201).json(newPdf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Upload PDF file → Cloudinary placeholder
+// ── Upload PDF file → Cloudinary → Save into Local JSON DB ────────────────────
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
     const { title, semester, subject, type = 'notes' } = req.body;
@@ -78,7 +103,6 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
 
-    // 🚀 We still execute the Cloudinary link generation so you see it works in the logs!
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
@@ -95,26 +119,35 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
-    // Returns a mock object matching your old schema format exactly to prevent front-end crashes
-    res.status(201).json({
+    const data = getLocalData();
+    const fakeObjectId = [...Array(24)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+
+    const newPdf = {
+      _id: fakeObjectId, // ✅ Mimicking MongoDB native identifier
       title,
       semester: Number(semester),
       subject,
       type,
       s3Url: uploadResult.secure_url,
-    });
+      uploadedAt: new Date().toISOString()
+    };
+
+    data.pdfs.push(newPdf);
+    saveLocalData(data);
+
+    res.status(201).json(newPdf);
   } catch (err) {
     console.error('Upload error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ── Delete PDF ────────────────────────────────────────────────────────────────
 router.delete('/pdfs/:id', verifyAdmin, (req, res) => {
-  res.json({ message: 'PDF reference cleared from memory' });
-});
-
-router.post('/seed', verifyAdmin, (req, res) => {
-  res.json({ message: 'Hit /api/dev/seed to trigger seeding' });
+  const data = getLocalData();
+  data.pdfs = data.pdfs.filter(pdf => pdf._id !== req.params.id); // ✅ Checks against _id
+  saveLocalData(data);
+  res.json({ message: 'PDF completely deleted from memory file' });
 });
 
 export default router;
