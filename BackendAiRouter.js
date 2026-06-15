@@ -1,14 +1,41 @@
 // BackendAiRouter.js
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import PdfNotes from './models/PdfNotes.js';
 
 const router = express.Router();
 
 const PRIMARY_MODEL = "gemini-2.5-flash";
 const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 
-// ── FEATURE 2: Fetch and extract PDF text from Cloudinary URL ─────────────────
+// ── STATIC NOTES DATA REGISTRY (Matches your server.js parameters) ───────────
+const STATIC_NOTES_LINKS = {
+  1: [
+    { title: "Engineering Mathematics-I Notes", subject: "Maths", url: "https://example.com/sem1-maths.pdf" },
+    { title: "Engineering Physics Notes", subject: "Physics", url: "https://example.com/sem1-physics.pdf" }
+  ],
+  2: [
+    { title: "Engineering Mathematics-II Notes", subject: "Maths", url: "https://example.com/sem2-maths.pdf" },
+    { title: "Programming in C Notes", subject: "C Programming", url: "https://example.com/sem2-c.pdf" }
+  ],
+  3: [
+    { title: "Data Structures Handouts", subject: "DSA", url: "https://example.com/sem3-dsa.pdf" },
+    { title: "Object Oriented Programming Guide", subject: "OOPs", url: "https://example.com/sem3-oops.pdf" }
+  ],
+  4: [
+    { title: "Operating Systems Lecture Notes", subject: "OS", url: "https://example.com/sem4-os.pdf" },
+    { title: "Database Management Systems Manual", subject: "DBMS", url: "https://example.com/sem4-dbms.pdf" }
+  ],
+  5: [
+    { title: "Computer Networks Core Notes", subject: "CN", url: "https://example.com/sem5-cn.pdf" },
+    { title: "Design & Analysis of Algorithms Notes", subject: "DAA", url: "https://example.com/sem5-daa.pdf" }
+  ],
+  6: [
+    { title: "Software Engineering Complete Notes", subject: "SE", url: "https://example.com/sem6-se.pdf" },
+    { title: "Artificial Intelligence Blueprint", subject: "AI", url: "https://example.com/sem6-ai.pdf" }
+  ]
+};
+
+// ── FEATURE 2: Fetch and extract PDF text from Cloudinary/S3 URL ──────────────
 async function extractPdfText(url) {
   try {
     const pdfParse = (await import('pdf-parse')).default;
@@ -41,28 +68,29 @@ router.post('/chat', async (req, res) => {
     const semMatch = message.match(/(?:semester|sem)\s*(\d)/i);
     if (semMatch) {
       const semNumber = parseInt(semMatch[1]);
-      const matchingFiles = await PdfNotes.find({ semester: semNumber }).limit(5);
+      // Fetching matching datasets straight from memory registry instantly
+      const matchingFiles = STATIC_NOTES_LINKS[semNumber] || [];
 
       if (matchingFiles.length > 0) {
         semesterContext = `SYSTEM DIRECTIVE: User is asking about Semester ${semNumber}. You MUST share these exact PDF links in your response. Do not omit or shorten them:\n`;
         matchingFiles.forEach(file => {
-          const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(file.s3Url)}`;
+          const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(file.url)}`;
           semesterContext += `- ${file.title} (${file.subject}): ${viewerUrl}\n`;
         });
 
         // ── FEATURE 2: If user asks for solution/explanation, extract PDF content
         const wantsSolution = /solve|explain|solution|answer|summarize|what does|content|read/i.test(message);
         if (wantsSolution && matchingFiles[0]) {
-          console.log("📖 Extracting PDF content for AI analysis...");
-          const pdfText = await extractPdfText(matchingFiles[0].s3Url);
+          console.log("📖 Extracting PDF content from static reference for AI analysis...");
+          const pdfText = await extractPdfText(matchingFiles[0].url);
           if (pdfText) {
             pdfContentContext = `\n\nPDF CONTENT FOR REFERENCE (${matchingFiles[0].title}):\n${pdfText}\n\nUse this content to answer the user's question accurately.`;
           }
         }
       }
     }
-  } catch (dbErr) {
-    console.error("⚠️ DATABASE SCANNER ERROR:", dbErr);
+  } catch (scannerErr) {
+    console.error("⚠️ MEMORY SCANNER ERROR:", scannerErr);
   }
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
@@ -88,7 +116,6 @@ router.post('/chat', async (req, res) => {
     return res.json({ reply: aiTextOutput, modelUsed: PRIMARY_MODEL });
 
   } catch (primaryError) {
-    // 🛡️ CRITICAL ADJUSTMENT: Detect both 429 (Quota) AND 503 (High Demand Service Outage)
     const isQuotaCrash = primaryError.status === 429 ||
       (primaryError.message && primaryError.message.includes('429')) ||
       (primaryError.message && primaryError.message.toLowerCase().includes('quota'));
@@ -97,7 +124,6 @@ router.post('/chat', async (req, res) => {
       (primaryError.message && primaryError.message.includes('503')) ||
       (primaryError.message && primaryError.message.toLowerCase().includes('unavailable'));
 
-    // If Google throttles us OR drops the ball with high demand, activate the fallback flow
     if (isQuotaCrash || isServiceUnavailable) {
       const reason = isQuotaCrash ? "rate-limited" : "overloaded (503)";
       console.warn(`⚠️ SYSTEM NOTICE: ${PRIMARY_MODEL} is ${reason}! Deploying backup model...`);
@@ -126,7 +152,6 @@ router.post('/chat', async (req, res) => {
       }
     }
 
-    // Tracker for any completely unrelated system crashes (like missing parameters)
     console.error("======== GENERAL GOOGLE API CRASH TRACKER ========");
     console.error(primaryError);
     return res.status(500).json({ error: "Internal processing breakdown.", details: primaryError.message });
