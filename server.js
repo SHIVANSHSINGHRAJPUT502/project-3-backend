@@ -141,3 +141,4 @@ process.on('uncaughtException', (err) => {
 app.listen(PORT, () => {
   console.log("🚀 API Microservice live on cloud port:", PORT);
 });
+export default app;
