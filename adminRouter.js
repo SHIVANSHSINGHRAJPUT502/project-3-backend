@@ -7,6 +7,10 @@ import User from './models/User.js';
 
 const router = express.Router();
 
+const JWT_SECRET = process.env.JWT_SECRET || 'studynexus_jwt_secret_key_2026';
+const ADMIN_USER = process.env.ADMIN_USERNAME || 'shivansh';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'admin123';
+
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -24,53 +28,77 @@ const upload = multer({
 });
 
 const verifyAdmin = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
   try {
-    jwt.verify(token, process.env.JWT_SECRET);
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : req.headers['x-access-token'];
+
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.admin = decoded;
     next();
   } catch {
-    res.status(403).json({ error: 'Invalid token' });
+    return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
-  if (
-    username === process.env.ADMIN_USERNAME &&
-    password === process.env.ADMIN_PASSWORD
-  ) {
-    const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '8h' });
+  if (username === ADMIN_USER && password === ADMIN_PASS) {
+    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '8h' });
     return res.json({ token });
   }
-  res.status(401).json({ error: 'Invalid credentials' });
+  return res.status(401).json({ error: 'Invalid credentials' });
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 router.get('/stats', verifyAdmin, async (req, res) => {
-  const [users, pdfs] = await Promise.all([
-    User.countDocuments(),
-    PdfNotes.countDocuments()
-  ]);
-  res.json({ users, pdfs });
+  try {
+    const [users, pdfs] = await Promise.all([
+      User.countDocuments().catch(() => 0),
+      PdfNotes.countDocuments().catch(() => 0)
+    ]);
+    return res.json({ users, pdfs });
+  } catch (err) {
+    console.error('Stats error:', err);
+    return res.status(500).json({ users: 0, pdfs: 0, error: err.message });
+  }
 });
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 router.get('/users', verifyAdmin, async (req, res) => {
-  const users = await User.find({}, '-password');
-  res.json(users);
+  try {
+    const users = await User.find({}, '-password').lean();
+    return res.json(users);
+  } catch (err) {
+    console.error('Fetch users error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.delete('/users/:id', verifyAdmin, async (req, res) => {
-  await User.findByIdAndDelete(req.params.id);
-  res.json({ message: 'User deleted' });
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    return res.json({ message: 'User deleted' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ── PDFs ──────────────────────────────────────────────────────────────────────
 router.get('/pdfs', verifyAdmin, async (req, res) => {
-  const pdfs = await PdfNotes.find({});
-  res.json(pdfs);
+  try {
+    const pdfs = await PdfNotes.find({}).lean();
+    return res.json(pdfs);
+  } catch (err) {
+    console.error('Fetch PDFs error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Add PDF manually via URL
@@ -84,24 +112,21 @@ router.post('/pdfs', verifyAdmin, async (req, res) => {
       type: type || 'notes',
       s3Url
     });
-    res.status(201).json(pdf);
+    return res.status(201).json(pdf);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
 // Upload PDF file → Cloudinary → save URL in MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
-    const title = req.body.title;
-    const semester = req.body.semester;
-    const subject = req.body.subject;
-    const type = req.body.type || 'notes'; // ← force fallback to notes
-
-    console.log("REQ BODY:", req.body); // ← debug log (remove after fixing)
+    const { title, semester, subject, type } = req.body;
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    if (!title || !semester || !subject) return res.status(400).json({ error: 'Title, semester and subject required' });
+    if (!title || !semester || !subject) {
+      return res.status(400).json({ error: 'Title, semester and subject required' });
+    }
 
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
@@ -123,24 +148,28 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       title,
       semester: Number(semester),
       subject,
-      type,
+      type: type || 'notes',
       s3Url: uploadResult.secure_url,
     });
 
-    res.status(201).json(pdf);
+    return res.status(201).json(pdf);
   } catch (err) {
     console.error('Upload error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
 router.delete('/pdfs/:id', verifyAdmin, async (req, res) => {
-  await PdfNotes.findByIdAndDelete(req.params.id);
-  res.json({ message: 'PDF deleted' });
+  try {
+    await PdfNotes.findByIdAndDelete(req.params.id);
+    return res.json({ message: 'PDF deleted' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/seed', verifyAdmin, async (req, res) => {
-  res.json({ message: 'Hit /api/dev/seed to trigger seeding' });
+  return res.json({ message: 'Hit /api/dev/seed to trigger seeding' });
 });
 
 export default router;
