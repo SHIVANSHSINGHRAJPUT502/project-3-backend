@@ -24,12 +24,36 @@ app.use(cors({
 }));
 app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI, {
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-})
-  .then(() => console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!'))
-  .catch((err) => console.error('❌ Cloud Database Connection Failure:', err));
+// ─── Reusable Serverless Database Connection ─────────────────────────────────
+let cachedDb = null;
+
+const connectDB = async () => {
+  if (cachedDb && mongoose.connection.readyState === 1) {
+    return cachedDb;
+  }
+  try {
+    const db = await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    cachedDb = db;
+    console.log('🔮 Connected safely to MongoDB Atlas Cloud Cluster!');
+    return db;
+  } catch (err) {
+    console.error('❌ Cloud Database Connection Failure:', err);
+    throw err;
+  }
+};
+
+// Ensure DB is connected before handling any incoming API request
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(500).json({ error: "Database connection failed", details: err.message });
+  }
+});
 
 // ─── Trivia Schema Configuration ─────────────────────────────────────────────
 const questionSchema = new mongoose.Schema({
@@ -46,21 +70,22 @@ const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', qu
 // ✅ Subjects derived from uploaded PDFs — returns distinct subject names
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
+    const sem = Number(req.params.semId);
     const subjects = await PdfNotes.distinct('subject', {
-      semester: Number(req.params.semId)
+      semester: sem
     });
     res.status(200).json(subjects);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch subjects" });
+    console.error("Error in /api/subjects route:", error);
+    res.status(500).json({ error: "Failed to fetch subjects", details: error.message });
   }
 });
 
-// ✅ Fetch PDFs by semester + subject + type (With safety fallback parameters)
+// ✅ Fetch PDFs by semester + subject + type
 app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
   try {
     const { semester, subject, type } = req.params;
     
-    // Safety check query builder to avoid field evaluation crashes if type is missing
     const query = {
       semester: Number(semester),
       subject: decodeURIComponent(subject)
@@ -73,7 +98,8 @@ app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
     const pdfs = await PdfNotes.find(query).sort({ uploadedAt: -1 });
     res.status(200).json(pdfs);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch PDFs" });
+    console.error("Error in /api/notes route:", error);
+    res.status(500).json({ error: "Failed to fetch PDFs", details: error.message });
   }
 });
 
@@ -87,7 +113,7 @@ app.get('/api/relax/trivia', async (req, res) => {
   }
 });
 
-// ✅ Seed endpoint for local/dev dataset generation
+// ✅ Seed endpoint
 app.get('/api/dev/seed', async (req, res) => {
   try {
     await Question.deleteMany({});
@@ -141,4 +167,5 @@ process.on('uncaughtException', (err) => {
 app.listen(PORT, () => {
   console.log("🚀 API Microservice live on cloud port:", PORT);
 });
+
 export default app;
