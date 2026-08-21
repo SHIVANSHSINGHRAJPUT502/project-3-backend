@@ -74,7 +74,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 
 // ── Student PDF Requests ──────────────────────────────────────────────────────
 
-// Public endpoint for students to submit notes/PYQ requests
+// Public: Submit notes/PYQ request
 router.post('/requests/new', async (req, res) => {
   try {
     const { name, semester, message } = req.body;
@@ -95,7 +95,20 @@ router.post('/requests/new', async (req, res) => {
   }
 });
 
-// Admin endpoint to view all pending requests
+// Public: Recent requests ticker feed
+router.get('/requests/recent', async (req, res) => {
+  try {
+    const recent = await Request.find({})
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .lean();
+    return res.json(recent);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: View all requests
 router.get('/requests', verifyAdmin, async (req, res) => {
   try {
     const requests = await Request.find({}).sort({ createdAt: -1 }).lean();
@@ -106,7 +119,22 @@ router.get('/requests', verifyAdmin, async (req, res) => {
   }
 });
 
-// Admin endpoint to mark a request as resolved/completed
+// Admin: Update request status
+router.patch('/requests/:id/status', verifyAdmin, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const updated = await Request.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Resolve / remove request
 router.delete('/requests/:id', verifyAdmin, async (req, res) => {
   try {
     await Request.findByIdAndDelete(req.params.id);
@@ -164,7 +192,7 @@ router.post('/pdfs', verifyAdmin, async (req, res) => {
   }
 });
 
-// Upload PDF file → Cloudinary → save URL in MongoDB
+// Upload PDF file → Cloudinary → MongoDB
 router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) => {
   try {
     const { title, semester, subject, type } = req.body;
