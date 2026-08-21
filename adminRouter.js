@@ -4,6 +4,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import PdfNotes from './models/PdfNotes.js';
 import User from './models/User.js';
+import Request from './models/Request.js';
 
 const router = express.Router();
 
@@ -59,14 +60,59 @@ router.post('/login', (req, res) => {
 // ── Stats ─────────────────────────────────────────────────────────────────────
 router.get('/stats', verifyAdmin, async (req, res) => {
   try {
-    const [users, pdfs] = await Promise.all([
+    const [users, pdfs, pendingRequests] = await Promise.all([
       User.countDocuments().catch(() => 0),
-      PdfNotes.countDocuments().catch(() => 0)
+      PdfNotes.countDocuments().catch(() => 0),
+      Request.countDocuments().catch(() => 0)
     ]);
-    return res.json({ users, pdfs });
+    return res.json({ users, pdfs, pendingRequests });
   } catch (err) {
     console.error('Stats error:', err);
-    return res.status(500).json({ users: 0, pdfs: 0, error: err.message });
+    return res.status(500).json({ users: 0, pdfs: 0, pendingRequests: 0, error: err.message });
+  }
+});
+
+// ── Student PDF Requests ──────────────────────────────────────────────────────
+
+// Public endpoint for students to submit notes/PYQ requests
+router.post('/requests/new', async (req, res) => {
+  try {
+    const { name, semester, message } = req.body;
+    if (!semester || !message) {
+      return res.status(400).json({ error: 'Semester and message are required' });
+    }
+
+    const newRequest = await Request.create({
+      name: name?.trim() || 'Anonymous Student',
+      semester: String(semester),
+      message: message.trim(),
+    });
+
+    return res.status(201).json(newRequest);
+  } catch (err) {
+    console.error('Error creating request:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin endpoint to view all pending requests
+router.get('/requests', verifyAdmin, async (req, res) => {
+  try {
+    const requests = await Request.find({}).sort({ createdAt: -1 }).lean();
+    return res.json(requests);
+  } catch (err) {
+    console.error('Fetch requests error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin endpoint to mark a request as resolved/completed
+router.delete('/requests/:id', verifyAdmin, async (req, res) => {
+  try {
+    await Request.findByIdAndDelete(req.params.id);
+    return res.json({ message: 'Request resolved and removed' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
