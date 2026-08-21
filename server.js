@@ -19,10 +19,13 @@ app.use(cors({
     'https://studynexus.vercel.app',
     'https://project-3-backend-production-8932.up.railway.app'
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
 app.use(express.json());
+
+// ─── In-Memory Live Active Users Tracker (Heartbeat Engine) ───────────────────
+const activeVisitors = new Map();
 
 // ─── Reusable Serverless Database Connection ─────────────────────────────────
 let cachedDb = null;
@@ -65,7 +68,32 @@ const questionSchema = new mongoose.Schema({
 }, { collection: 'relax_trivia' });
 const Question = mongoose.models.RelaxTrivia || mongoose.model('RelaxTrivia', questionSchema);
 
-// ─── ROUTES ──────────────────────────────────────────────────────────────────
+// ─── ACTIVE USERS / HEARTBEAT ROUTES ─────────────────────────────────────────
+
+// Client sends ping every 15-20s
+app.post('/api/heartbeat', (req, res) => {
+  const visitorId = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || 'client-node';
+  activeVisitors.set(visitorId, Date.now());
+  return res.status(200).json({ status: 'alive' });
+});
+
+// Fetch active users count (Active within last 45s)
+app.get('/api/active-users', (req, res) => {
+  const now = Date.now();
+  const timeoutLimit = 45 * 1000;
+
+  // Clean stale connections
+  for (const [id, lastSeen] of activeVisitors.entries()) {
+    if (now - lastSeen > timeoutLimit) {
+      activeVisitors.delete(id);
+    }
+  }
+
+  // Always return at least 1 when anyone accesses the platform
+  return res.json({ count: Math.max(1, activeVisitors.size) });
+});
+
+// ─── GENERAL DATA ROUTES ─────────────────────────────────────────────────────
 
 // ✅ Subjects derived from uploaded PDFs — returns distinct subject names
 app.get('/api/subjects/:semId', async (req, res) => {
