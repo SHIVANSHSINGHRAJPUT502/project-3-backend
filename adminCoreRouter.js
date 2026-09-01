@@ -5,6 +5,7 @@ import User from './models/User.js';
 import Request from './models/Request.js';
 import Subject from './models/Subject.js';
 import PdfNotes from './models/PdfNotes.js';
+import mongoose from 'mongoose';
 
 const router = express.Router();
 

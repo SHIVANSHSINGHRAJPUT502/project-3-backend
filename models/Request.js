@@ -21,12 +21,13 @@ const requestSchema = new mongoose.Schema(
     },
     status: { 
       type: String, 
-      enum: ['Pending', 'In-Progress', 'Resolved'], 
+      enum: ['Pending', 'In-Progress', 'Resolved', 'pending', 'resolved'], 
       default: 'Pending' 
     }
   },
   { 
-    timestamps: true // Automatically manages createdAt and updatedAt
+    timestamps: true,
+    collection: 'requests' // Explicit collection name
   }
 );
 
@@ -34,5 +35,7 @@ const requestSchema = new mongoose.Schema(
 requestSchema.index({ createdAt: -1 });
 requestSchema.index({ status: 1 });
 
-const Request = mongoose.models.Request || mongoose.model('Request', requestSchema);
+const Request = mongoose.models.Request || mongoose.model('Request', requestSchema, 'requests');
+
+export { Request };
 export default Request;
