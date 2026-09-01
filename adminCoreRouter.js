@@ -1,10 +1,10 @@
-// routes/adminCoreRouter.js
+// adminCoreRouter.js
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
-import Request from '../models/Request.js';
-import Subject from '../models/Subject.js';
-import PdfNotes from '../models/PdfNotes.js';
+import User from './models/User.js';
+import Request from './models/Request.js';
+import Subject from './models/Subject.js';
+import PdfNotes from './models/PdfNotes.js';
 
 const router = express.Router();
 

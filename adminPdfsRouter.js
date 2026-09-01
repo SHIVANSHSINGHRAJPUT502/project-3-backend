@@ -1,8 +1,8 @@
-// routes/adminPdfsRouter.js
+// adminPdfsRouter.js
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
-import PdfNotes from '../models/PdfNotes.js';
+import PdfNotes from './models/PdfNotes.js';
 import { verifyAdmin } from './adminCoreRouter.js';
 
 const router = express.Router();
@@ -16,7 +16,7 @@ cloudinary.config({
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') cb(null, true);
     else cb(new Error('Only PDF files allowed'));
