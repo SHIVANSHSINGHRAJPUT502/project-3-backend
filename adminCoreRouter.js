@@ -13,6 +13,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'studynexus_jwt_secret_key_2026';
 const ADMIN_USER = process.env.ADMIN_USERNAME || 'shivansh';
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'admin123';
 
+// ── Database Reconnection Guard for Serverless Invocation ────────────────────
+const ensureDbConnection = async () => {
+  if (mongoose.connection.readyState === 1) return;
+  if (!process.env.MONGO_URI) {
+    throw new Error('MONGO_URI is missing in environment variables');
+  }
+  await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 30000,
+  });
+};
+
 export const verifyAdmin = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -45,6 +57,7 @@ router.post('/login', (req, res) => {
 // ── Platform Stats ────────────────────────────────────────────────────────────
 router.get('/stats', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const [users, pdfs, pendingRequests, pendingUploads, subjectsCount] = await Promise.all([
       User.countDocuments().catch(() => 0),
       PdfNotes.countDocuments({ $or: [{ status: 'approved' }, { status: { $exists: false } }] }).catch(() => 0),
@@ -62,6 +75,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 // ── Subject Catalog & Dropdown Sources ────────────────────────────────────────
 router.get('/subjects', async (req, res) => {
   try {
+    await ensureDbConnection();
     const { semId, semester } = req.query;
     const targetSem = semId || semester;
     const filter = targetSem ? { semId: String(targetSem) } : {};
@@ -74,6 +88,7 @@ router.get('/subjects', async (req, res) => {
 
 router.get('/subjects/:semId', async (req, res) => {
   try {
+    await ensureDbConnection();
     const { semId } = req.params;
     const subjects = await Subject.find({ semId: String(semId) }).sort({ name: 1 }).lean();
     return res.json(subjects || []);
@@ -84,6 +99,7 @@ router.get('/subjects/:semId', async (req, res) => {
 
 router.post('/subjects', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const { name, semId, semester, code, credits } = req.body;
     const targetSem = String(semId || semester);
 
@@ -106,6 +122,7 @@ router.post('/subjects', verifyAdmin, async (req, res) => {
 
 router.delete('/subjects/:id', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     await Subject.findByIdAndDelete(req.params.id);
     return res.json({ message: 'Subject removed from directory' });
   } catch (err) {
@@ -115,6 +132,7 @@ router.delete('/subjects/:id', verifyAdmin, async (req, res) => {
 
 router.post('/subjects/sync-existing', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const existingPdfs = await PdfNotes.find({}, 'subject semester').lean();
     let created = 0;
 
@@ -143,26 +161,35 @@ router.post('/subjects/sync-existing', verifyAdmin, async (req, res) => {
 // ── Student PDF Requests ──────────────────────────────────────────────────────
 router.post('/requests/new', async (req, res) => {
   try {
-    const { name, semester, message } = req.body;
-    if (!semester || !message) {
-      return res.status(400).json({ error: 'Semester and message are required' });
+    await ensureDbConnection();
+
+    const { name, semester, message, details, description, requestMessage, note, query } = req.body;
+    const finalMessage = (message || details || description || requestMessage || note || query || '').trim();
+
+    if (!semester || !finalMessage) {
+      return res.status(400).json({ error: 'Semester and request details/message are required' });
     }
 
     const newRequest = await Request.create({
       name: name?.trim() || 'Anonymous Student',
       semester: String(semester),
-      message: message.trim(),
+      message: finalMessage,
+      status: 'Pending'
     });
 
-    return res.status(201).json(newRequest);
+    return res.status(201).json({
+      message: 'Request submitted successfully!',
+      request: newRequest
+    });
   } catch (err) {
-    console.error('Error creating request:', err);
-    return res.status(500).json({ error: err.message });
+    console.error('Error creating request:', err.message);
+    return res.status(500).json({ error: 'Failed to create request', details: err.message });
   }
 });
 
 router.get('/requests/recent', async (req, res) => {
   try {
+    await ensureDbConnection();
     const recent = await Request.find({})
       .sort({ createdAt: -1 })
       .limit(6)
@@ -176,6 +203,7 @@ router.get('/requests/recent', async (req, res) => {
 
 router.get('/requests', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const requests = await Request.find({}).sort({ createdAt: -1 }).lean().catch(() => []);
     return res.json(requests || []);
   } catch (err) {
@@ -185,6 +213,7 @@ router.get('/requests', verifyAdmin, async (req, res) => {
 
 router.patch('/requests/:id/status', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const { status } = req.body;
     const updated = await Request.findByIdAndUpdate(req.params.id, { status }, { new: true });
     return res.json(updated);
@@ -195,6 +224,7 @@ router.patch('/requests/:id/status', verifyAdmin, async (req, res) => {
 
 router.delete('/requests/:id', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     await Request.findByIdAndDelete(req.params.id);
     return res.json({ message: 'Request resolved and removed' });
   } catch (err) {
@@ -205,6 +235,7 @@ router.delete('/requests/:id', verifyAdmin, async (req, res) => {
 // ── User Management ───────────────────────────────────────────────────────────
 router.get('/users', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const users = await User.find({}, '-password').lean().catch(() => []);
     return res.json(users || []);
   } catch (err) {
@@ -214,6 +245,7 @@ router.get('/users', verifyAdmin, async (req, res) => {
 
 router.delete('/users/:id', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     await User.findByIdAndDelete(req.params.id);
     return res.json({ message: 'User deleted' });
   } catch (err) {
