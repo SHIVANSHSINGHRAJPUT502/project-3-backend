@@ -39,7 +39,18 @@ const ensureDbConnection = async () => {
 // ── Public Submissions & Moderation Queue ─────────────────────────────────────
 router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
   try {
-    const { title, subject, semester, type, fileUrl, uploaderName } = req.body;
+    const { 
+      title, 
+      subject, 
+      semester, 
+      type, 
+      fileUrl, 
+      uploaderName, 
+      name, 
+      uploadedBy, 
+      uploader, 
+      author 
+    } = req.body;
 
     if (!title || !subject || !semester) {
       return res.status(400).json({ error: 'Title, subject, and semester are required' });
@@ -76,13 +87,16 @@ router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
     // Normalize type to lowercase so enum validation passes
     const cleanType = (type || 'notes').toLowerCase().trim();
 
+    // Extract uploader name with support for common frontend aliases
+    const finalUploaderName = (uploaderName || name || uploadedBy || uploader || author || 'Student Contributor').trim();
+
     const note = await PdfNotes.create({
       title: title.trim(),
       subject: subject.trim(),
       semester: Number(semester),
       type: cleanType,
       s3Url: finalPdfUrl.trim(),
-      uploaderName: uploaderName?.trim() || 'Student Contributor',
+      uploaderName: finalUploaderName,
       status: 'pending'
     });
 
@@ -98,7 +112,19 @@ router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
 
 router.post('/notes/submit', async (req, res) => {
   try {
-    const { title, subject, semester, type, s3Url, fileUrl, uploaderName } = req.body;
+    const { 
+      title, 
+      subject, 
+      semester, 
+      type, 
+      s3Url, 
+      fileUrl, 
+      uploaderName, 
+      name, 
+      uploadedBy, 
+      uploader, 
+      author 
+    } = req.body;
     const pdfUrl = s3Url || fileUrl;
 
     if (!title || !subject || !semester || !pdfUrl) {
@@ -108,13 +134,16 @@ router.post('/notes/submit', async (req, res) => {
     await ensureDbConnection();
     const cleanType = (type || 'notes').toLowerCase().trim();
 
+    // Extract uploader name with support for common frontend aliases
+    const finalUploaderName = (uploaderName || name || uploadedBy || uploader || author || 'Student Contributor').trim();
+
     const note = await PdfNotes.create({
       title: title.trim(),
       subject: subject.trim(),
       semester: Number(semester),
       type: cleanType,
       s3Url: pdfUrl.trim(),
-      uploaderName: uploaderName?.trim() || 'Student Contributor',
+      uploaderName: finalUploaderName,
       status: 'pending'
     });
 
