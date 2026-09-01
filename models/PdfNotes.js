@@ -1,12 +1,24 @@
-  import mongoose from 'mongoose';
+// models/PdfNotes.js
+import mongoose from 'mongoose';
 
-  const PdfNotesSchema = new mongoose.Schema({
-    title: { type: String, required: true },
-    semester: { type: Number, required: true },
-    subject: { type: String, required: true },
-    type: { type: String, enum: ['notes', 'pyq', 'syllabus'], default: 'notes' },
-    s3Url: { type: String, required: true },
-    uploadedAt: { type: Date, default: Date.now }
-  });
+const PdfNotesSchema = new mongoose.Schema({
+  title: { type: String, required: true, trim: true },
+  semester: { type: Number, required: true },
+  subject: { type: String, required: true, trim: true },
+  type: { 
+    type: String, 
+    enum: ['notes', 'pyq', 'syllabus'], 
+    default: 'notes',
+    lowercase: true,
+    trim: true
+  },
+  s3Url: { type: String, required: true, trim: true },
+  uploaderName: { type: String, default: 'Student Contributor', trim: true },
+  status: { type: String, default: 'approved', trim: true }, // 'pending' | 'approved'
+  uploadedAt: { type: Date, default: Date.now }
+}, { timestamps: true });
 
-  export default mongoose.model('PdfNotes', PdfNotesSchema, 'pdf_notes');
+// Prevent model overwrite errors during Vercel hot reloads while preserving your exact 'pdf_notes' collection
+const PdfNotes = mongoose.models.PdfNotes || mongoose.model('PdfNotes', PdfNotesSchema, 'pdf_notes');
+
+export default PdfNotes;

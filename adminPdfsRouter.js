@@ -57,11 +57,14 @@ router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
       return res.status(400).json({ error: 'Please select a PDF file or provide a valid link' });
     }
 
+    // Normalize type to lowercase so enum validation passes
+    const cleanType = (type || 'notes').toLowerCase().trim();
+
     const note = await PdfNotes.create({
       title: title.trim(),
       subject: subject.trim(),
       semester: Number(semester),
-      type: type || 'Notes',
+      type: cleanType,
       s3Url: finalPdfUrl.trim(),
       uploaderName: uploaderName?.trim() || 'Student Contributor',
       status: 'pending'
@@ -86,11 +89,13 @@ router.post('/notes/submit', async (req, res) => {
       return res.status(400).json({ error: 'Title, subject, semester, and PDF link are required' });
     }
 
+    const cleanType = (type || 'notes').toLowerCase().trim();
+
     const note = await PdfNotes.create({
       title: title.trim(),
       subject: subject.trim(),
       semester: Number(semester),
-      type: type || 'notes',
+      type: cleanType,
       s3Url: pdfUrl.trim(),
       uploaderName: uploaderName?.trim() || 'Student Contributor',
       status: 'pending'
@@ -149,11 +154,13 @@ router.get('/pdfs', verifyAdmin, async (req, res) => {
 router.post('/pdfs', verifyAdmin, async (req, res) => {
   try {
     const { title, semester, subject, type, s3Url, fileUrl } = req.body;
+    const cleanType = (type || 'notes').toLowerCase().trim();
+
     const pdf = await PdfNotes.create({
       title: title.trim(),
       semester: Number(semester),
       subject: subject.trim(),
-      type: type || 'notes',
+      type: cleanType,
       s3Url: (s3Url || fileUrl).trim(),
       status: 'approved'
     });
@@ -188,11 +195,13 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
+    const cleanType = (type || 'notes').toLowerCase().trim();
+
     const pdf = await PdfNotes.create({
       title: title.trim(),
       semester: Number(semester),
       subject: subject.trim(),
-      type: type || 'notes',
+      type: cleanType,
       s3Url: uploadResult.secure_url,
       status: 'approved'
     });

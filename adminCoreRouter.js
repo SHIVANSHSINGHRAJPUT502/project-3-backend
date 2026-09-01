@@ -65,7 +65,7 @@ router.get('/subjects', async (req, res) => {
     const targetSem = semId || semester;
     const filter = targetSem ? { semId: String(targetSem) } : {};
     const subjects = await Subject.find(filter).sort({ name: 1 }).lean();
-    return res.json(subjects);
+    return res.json(subjects || []);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch subjects', details: err.message });
   }
@@ -75,7 +75,7 @@ router.get('/subjects/:semId', async (req, res) => {
   try {
     const { semId } = req.params;
     const subjects = await Subject.find({ semId: String(semId) }).sort({ name: 1 }).lean();
-    return res.json(subjects);
+    return res.json(subjects || []);
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch semester subjects', details: err.message });
   }
@@ -165,17 +165,18 @@ router.get('/requests/recent', async (req, res) => {
     const recent = await Request.find({})
       .sort({ createdAt: -1 })
       .limit(6)
-      .lean();
-    return res.json(recent);
+      .lean()
+      .catch(() => []);
+    return res.json(recent || []);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.json([]);
   }
 });
 
 router.get('/requests', verifyAdmin, async (req, res) => {
   try {
-    const requests = await Request.find({}).sort({ createdAt: -1 }).lean();
-    return res.json(requests);
+    const requests = await Request.find({}).sort({ createdAt: -1 }).lean().catch(() => []);
+    return res.json(requests || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -203,8 +204,8 @@ router.delete('/requests/:id', verifyAdmin, async (req, res) => {
 // ── User Management ───────────────────────────────────────────────────────────
 router.get('/users', verifyAdmin, async (req, res) => {
   try {
-    const users = await User.find({}, '-password').lean();
-    return res.json(users);
+    const users = await User.find({}, '-password').lean().catch(() => []);
+    return res.json(users || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
