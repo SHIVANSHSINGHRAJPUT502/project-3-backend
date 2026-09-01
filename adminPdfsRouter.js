@@ -2,6 +2,7 @@
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
+import mongoose from 'mongoose';
 import PdfNotes from './models/PdfNotes.js';
 import { verifyAdmin } from './adminCoreRouter.js';
 
@@ -22,6 +23,18 @@ const upload = multer({
     else cb(new Error('Only PDF files allowed'));
   }
 });
+
+// ── Serverless Reconnect Guard ───────────────────────────────────────────────
+const ensureDbConnection = async () => {
+  if (mongoose.connection.readyState === 1) return;
+  if (!process.env.MONGO_URI) {
+    throw new Error('MONGO_URI is missing from environment variables');
+  }
+  await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 8000,
+    socketTimeoutMS: 45000,
+  });
+};
 
 // ── Public Submissions & Moderation Queue ─────────────────────────────────────
 router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
@@ -57,6 +70,9 @@ router.post('/notes/submit-file', upload.single('pdf'), async (req, res) => {
       return res.status(400).json({ error: 'Please select a PDF file or provide a valid link' });
     }
 
+    // Ensure database connection is active right after Cloudinary finishes
+    await ensureDbConnection();
+
     // Normalize type to lowercase so enum validation passes
     const cleanType = (type || 'notes').toLowerCase().trim();
 
@@ -89,6 +105,7 @@ router.post('/notes/submit', async (req, res) => {
       return res.status(400).json({ error: 'Title, subject, semester, and PDF link are required' });
     }
 
+    await ensureDbConnection();
     const cleanType = (type || 'notes').toLowerCase().trim();
 
     const note = await PdfNotes.create({
@@ -112,8 +129,9 @@ router.post('/notes/submit', async (req, res) => {
 
 router.get('/notes/pending', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const pending = await PdfNotes.find({ status: 'pending' }).sort({ createdAt: -1 }).lean();
-    return res.json({ notes: pending });
+    return res.json({ notes: pending || [] });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch pending submissions' });
   }
@@ -121,6 +139,7 @@ router.get('/notes/pending', verifyAdmin, async (req, res) => {
 
 router.patch('/notes/:id/approve', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const approved = await PdfNotes.findByIdAndUpdate(
       req.params.id,
       { status: 'approved' },
@@ -134,6 +153,7 @@ router.patch('/notes/:id/approve', verifyAdmin, async (req, res) => {
 
 router.delete('/notes/:id/reject', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     await PdfNotes.findByIdAndDelete(req.params.id);
     return res.json({ message: 'Submission rejected and removed' });
   } catch (err) {
@@ -144,8 +164,9 @@ router.delete('/notes/:id/reject', verifyAdmin, async (req, res) => {
 // ── Admin Direct PDF Management ───────────────────────────────────────────────
 router.get('/pdfs', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     const pdfs = await PdfNotes.find({}).sort({ createdAt: -1 }).lean();
-    return res.json(pdfs);
+    return res.json(pdfs || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -154,6 +175,7 @@ router.get('/pdfs', verifyAdmin, async (req, res) => {
 router.post('/pdfs', verifyAdmin, async (req, res) => {
   try {
     const { title, semester, subject, type, s3Url, fileUrl } = req.body;
+    await ensureDbConnection();
     const cleanType = (type || 'notes').toLowerCase().trim();
 
     const pdf = await PdfNotes.create({
@@ -195,6 +217,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
       stream.end(req.file.buffer);
     });
 
+    await ensureDbConnection();
     const cleanType = (type || 'notes').toLowerCase().trim();
 
     const pdf = await PdfNotes.create({
@@ -215,6 +238,7 @@ router.post('/pdfs/upload', verifyAdmin, upload.single('pdf'), async (req, res) 
 
 router.delete('/pdfs/:id', verifyAdmin, async (req, res) => {
   try {
+    await ensureDbConnection();
     await PdfNotes.findByIdAndDelete(req.params.id);
     return res.json({ message: 'PDF deleted' });
   } catch (err) {

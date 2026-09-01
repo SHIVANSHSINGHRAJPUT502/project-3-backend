@@ -33,7 +33,7 @@ const activeVisitors = new Map();
 // ─── Serverless-Optimized Database Connector ─────────────────────────────────
 let cachedConn = null;
 
-const connectDB = async () => {
+export const connectDB = async () => {
   if (cachedConn && mongoose.connection.readyState === 1) {
     return cachedConn;
   }
@@ -43,8 +43,8 @@ const connectDB = async () => {
   }
   try {
     cachedConn = await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 30000,
+      serverSelectionTimeoutMS: 8000,
+      socketTimeoutMS: 45000,
     });
     console.log('🔮 Connected safely to MongoDB Atlas!');
     return cachedConn;
