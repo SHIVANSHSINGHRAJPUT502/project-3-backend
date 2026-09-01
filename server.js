@@ -30,40 +30,33 @@ app.use(express.json());
 // ─── In-Memory Heartbeat Engine ──────────────────────────────────────────────
 const activeVisitors = new Map();
 
-// ─── Serverless Safe MongoDB Connector ───────────────────────────────────────
-let isConnecting = false;
+// ─── Serverless-Optimized Database Connector ─────────────────────────────────
+let cachedConn = null;
 
 const connectDB = async () => {
-  if (mongoose.connection.readyState === 1) return;
-  if (isConnecting) return;
-
+  if (cachedConn && mongoose.connection.readyState === 1) {
+    return cachedConn;
+  }
+  if (!process.env.MONGO_URI) {
+    console.error('⚠️ MONGO_URI is missing in environment variables!');
+    return null;
+  }
   try {
-    isConnecting = true;
-    if (!process.env.MONGO_URI) {
-      console.error('⚠️ MONGO_URI is missing in environment variables!');
-      return;
-    }
-    await mongoose.connect(process.env.MONGO_URI, {
+    cachedConn = await mongoose.connect(process.env.MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 30000,
     });
     console.log('🔮 Connected safely to MongoDB Atlas!');
+    return cachedConn;
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
-  } finally {
-    isConnecting = false;
+    return null;
   }
 };
 
-// Connect asynchronously without blocking lightweight routes
-app.use((req, res, next) => {
-  connectDB().catch(() => {});
-  next();
-});
-
-// ─── Heartbeat Routes (Must never crash) ──────────────────────────────────────
+// ─── Heartbeat Routes (Fast & Zero DB Dependency) ────────────────────────────
 app.post('/api/heartbeat', (req, res) => {
-  const visitorId = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || 'node';
+  const visitorId = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || 'node';
   activeVisitors.set(visitorId, Date.now());
   return res.status(200).json({ status: 'alive' });
 });
@@ -77,9 +70,10 @@ app.get('/api/active-users', (req, res) => {
   return res.json({ count: Math.max(1, activeVisitors.size) });
 });
 
-// ─── Subjects Route ──────────────────────────────────────────────────────────
+// ─── Subjects Route (Awaits DB connection cleanly) ───────────────────────────
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
+    await connectDB();
     const sem = String(req.params.semId);
     
     if (mongoose.connection.readyState === 1) {
@@ -103,7 +97,9 @@ app.get('/api/subjects/:semId', async (req, res) => {
 // ─── PDF Notes Fetch ─────────────────────────────────────────────────────────
 app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
   try {
+    await connectDB();
     const { semester, subject, type } = req.params;
+    
     if (mongoose.connection.readyState !== 1) return res.status(200).json([]);
 
     const query = {
