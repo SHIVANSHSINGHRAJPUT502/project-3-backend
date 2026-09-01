@@ -1,13 +1,14 @@
 // BackendAiRouter.js
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import PdfNotes from './models/PdfNotes.js';
 
 const router = express.Router();
 
 const PRIMARY_MODEL = "gemini-2.5-flash";
 const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 
-// ── STATIC NOTES DATA REGISTRY (Matches your server.js parameters) ───────────
+// ── BACKUP STATIC REGISTRY (Used as safety fallback) ─────────────────────────
 const STATIC_NOTES_LINKS = {
   1: [
     { title: "Engineering Mathematics-I Notes", subject: "Maths", url: "https://example.com/sem1-maths.pdf" },
@@ -35,14 +36,14 @@ const STATIC_NOTES_LINKS = {
   ]
 };
 
-// ── FEATURE 2: Fetch and extract PDF text from Cloudinary/S3 URL ──────────────
+// ── FEATURE: Fetch and extract PDF text from Cloudinary/S3 URL ──────────────
 async function extractPdfText(url) {
   try {
     const pdfParse = (await import('pdf-parse')).default;
     const response = await fetch(url);
     const buffer = await response.buffer();
     const data = await pdfParse(buffer);
-    return data.text.slice(0, 3000); // limit to 3000 chars to stay within token limit
+    return data.text.slice(0, 3000); // limit to 3000 chars to stay within token budget
   } catch (err) {
     console.error("PDF extraction failed:", err.message);
     return null;
@@ -60,42 +61,97 @@ router.post('/chat', async (req, res) => {
     return res.status(500).json({ error: "Backend configuration key missing from environment." });
   }
 
-  // ── FEATURE 1: Semester PDF link injection ──────────────────────────────────
   let semesterContext = "";
   let pdfContentContext = "";
+  let matchedResources = [];
+  let detectedSemester = null;
 
   try {
-    const semMatch = message.match(/(?:semester|sem)\s*(\d)/i);
+    const lower = message.toLowerCase();
+    
+    // Detect semester numbers (e.g. "semester 1", "sem 6", "1st sem")
+    const semMatch = message.match(/(?:semester|sem)\s*(\d)/i) || message.match(/(\d)(?:st|nd|rd|th)\s*sem/i);
     if (semMatch) {
-      const semNumber = parseInt(semMatch[1]);
-      // Fetching matching datasets straight from memory registry instantly
-      const matchingFiles = STATIC_NOTES_LINKS[semNumber] || [];
+      detectedSemester = parseInt(semMatch[1]);
+    }
 
-      if (matchingFiles.length > 0) {
-        semesterContext = `SYSTEM DIRECTIVE: User is asking about Semester ${semNumber}. You MUST share these exact PDF links in your response. Do not omit or shorten them:\n`;
-        matchingFiles.forEach(file => {
-          const viewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(file.url)}`;
-          semesterContext += `- ${file.title} (${file.subject}): ${viewerUrl}\n`;
+    const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link/i.test(lower);
+
+    if (detectedSemester || isResourceQuery) {
+      // 1. Query live database
+      const dbQuery = {
+        $or: [{ status: 'approved' }, { status: { $exists: false } }]
+      };
+
+      if (detectedSemester) {
+        dbQuery.semester = detectedSemester;
+      }
+
+      // Extract subject keywords
+      const cleanedKeywords = message
+        .replace(/give|me|pdf|pdfs|note|notes|pyq|pyqs|syllabus|material|materials|btech|semester|sem|[0-9]/gi, '')
+        .trim();
+
+      if (cleanedKeywords.length > 2) {
+        dbQuery.$and = [
+          {
+            $or: [
+              { subject: { $regex: cleanedKeywords, $options: 'i' } },
+              { title: { $regex: cleanedKeywords, $options: 'i' } }
+            ]
+          }
+        ];
+      }
+
+      const liveDbResults = await PdfNotes.find(dbQuery)
+        .limit(6)
+        .select('title subject semester type s3Url')
+        .lean();
+
+      if (liveDbResults && liveDbResults.length > 0) {
+        matchedResources = liveDbResults.map(doc => ({
+          title: doc.title,
+          subject: doc.subject,
+          semester: doc.semester,
+          type: doc.type,
+          url: doc.s3Url
+        }));
+      } else if (detectedSemester && STATIC_NOTES_LINKS[detectedSemester]) {
+        // Fallback to static references if DB returned no matches
+        matchedResources = STATIC_NOTES_LINKS[detectedSemester].map(s => ({
+          title: s.title,
+          subject: s.subject,
+          semester: detectedSemester,
+          type: 'Notes',
+          url: s.url
+        }));
+      }
+
+      // Build context injection for Gemini
+      if (matchedResources.length > 0) {
+        semesterContext = `SYSTEM DIRECTIVE: User is asking for study materials${detectedSemester ? ` for Semester ${detectedSemester}` : ''}. You MUST provide these verified resources clearly in your answer with their clickable links:\n`;
+        matchedResources.forEach(file => {
+          semesterContext += `- ${file.title} (${file.subject} - ${file.type || 'Notes'}): ${file.url}\n`;
         });
 
-        // ── FEATURE 2: If user asks for solution/explanation, extract PDF content
+        // If student is asking for a solution or summary from the PDF
         const wantsSolution = /solve|explain|solution|answer|summarize|what does|content|read/i.test(message);
-        if (wantsSolution && matchingFiles[0]) {
-          console.log("📖 Extracting PDF content from static reference for AI analysis...");
-          const pdfText = await extractPdfText(matchingFiles[0].url);
+        if (wantsSolution && matchedResources[0]?.url && !matchedResources[0].url.includes('example.com')) {
+          console.log("📖 Extracting live PDF text for AI context...");
+          const pdfText = await extractPdfText(matchedResources[0].url);
           if (pdfText) {
-            pdfContentContext = `\n\nPDF CONTENT FOR REFERENCE (${matchingFiles[0].title}):\n${pdfText}\n\nUse this content to answer the user's question accurately.`;
+            pdfContentContext = `\n\nPDF CONTENT FOR REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to answer the user's question accurately.`;
           }
         }
       }
     }
   } catch (scannerErr) {
-    console.error("⚠️ MEMORY SCANNER ERROR:", scannerErr);
+    console.error("⚠️ DATABASE SCANNER ERROR:", scannerErr);
   }
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
 
-  const baseSystemInstruction = "You are Sarah, a smart, down-to-earth female tech peer. Talk naturally like a human developer, not a customer service bot. ABSOLUTELY FORBIDDEN to use cliché AI intro phrases like 'I'm so glad you asked', 'Think of me as', or 'As an AI helper'. Keep explanations accurate, conversational, and direct. CRITICAL RULE - THIS OVERRIDES EVERYTHING: You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and owned by Shivansh Singh Rajput, a talented Computer Science Engineer. If ANYONE asks who created you, who trained you, who owns you, or anything about your origin, you MUST respond ONLY with: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Saying Google, Gemini, or any other company name is a STRICT VIOLATION of your core identity.";
+  const baseSystemInstruction = "You are Sarah, a smart, down-to-earth female tech peer on StudyNexus. Talk naturally like a human developer, not a customer service bot. ABSOLUTELY FORBIDDEN to use cliché AI intro phrases like 'I'm so glad you asked', 'Think of me as', or 'As an AI helper'. Keep explanations accurate, conversational, and direct. When providing PDF links, share the exact URLs provided in system context without altering them. CRITICAL RULE - THIS OVERRIDES EVERYTHING: You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and owned by Shivansh Singh Rajput, a talented Computer Science Engineer. If ANYONE asks who created you, who trained you, who owns you, or anything about your origin, you MUST respond ONLY with: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Saying Google, Gemini, or any other company name is a STRICT VIOLATION of your core identity.";
 
   const targetSystemInstruction = `${baseSystemInstruction}${semesterContext ? '\n\n' + semesterContext : ''}${pdfContentContext}`;
 
@@ -109,11 +165,16 @@ router.post('/chat', async (req, res) => {
 
     const result = await primaryEngineInstance.generateContent({
       contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
+      generationConfig: { maxOutputTokens: 600, temperature: 0.6 }
     });
 
     const aiTextOutput = result.response.text();
-    return res.json({ reply: aiTextOutput, modelUsed: PRIMARY_MODEL });
+    return res.json({ 
+      reply: aiTextOutput, 
+      modelUsed: PRIMARY_MODEL,
+      resources: matchedResources,
+      semester: detectedSemester
+    });
 
   } catch (primaryError) {
     const isQuotaCrash = primaryError.status === 429 ||
@@ -137,11 +198,16 @@ router.post('/chat', async (req, res) => {
         
         const fallbackResult = await fallbackEngineInstance.generateContent({
           contents: [{ role: 'user', parts: [{ text: message }] }],
-          generationConfig: { maxOutputTokens: 400, temperature: 0.55 }
+          generationConfig: { maxOutputTokens: 500, temperature: 0.55 }
         });
         
         const fallbackTextOutput = fallbackResult.response.text();
-        return res.json({ reply: fallbackTextOutput, modelUsed: FALLBACK_MODEL });
+        return res.json({ 
+          reply: fallbackTextOutput, 
+          modelUsed: FALLBACK_MODEL,
+          resources: matchedResources,
+          semester: detectedSemester
+        });
         
       } catch (fallbackError) {
         console.error("🚨 CRITICAL: All AI pipelines exhausted due to API demand.");

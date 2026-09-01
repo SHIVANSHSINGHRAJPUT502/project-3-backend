@@ -2,6 +2,7 @@ import express from 'express';
 import BackendAiRouter from './BackendAiRouter.js';
 import adminRouter from './adminRouter.js';
 import PdfNotes from './models/PdfNotes.js';
+import Subject from './models/Subject.js';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -95,28 +96,40 @@ app.get('/api/active-users', (req, res) => {
 
 // ─── GENERAL DATA ROUTES ─────────────────────────────────────────────────────
 
-// ✅ Subjects derived from uploaded PDFs — returns distinct subject names
+// ✅ Subjects list by semester (Checks catalog first, falls back to PDF distinct subjects)
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
-    const sem = Number(req.params.semId);
-    const subjects = await PdfNotes.distinct('subject', {
-      semester: sem
+    const sem = req.params.semId;
+    
+    // 1. Check if subjects exist in the new Subject catalog
+    const catalogSubjects = await Subject.find({ semId: String(sem) }).sort({ name: 1 }).lean();
+    if (catalogSubjects.length > 0) {
+      return res.status(200).json(catalogSubjects.map(s => s.name));
+    }
+
+    // 2. Fallback to distinct subjects from existing PDFs (zero breakage)
+    const pdfSubjects = await PdfNotes.distinct('subject', {
+      semester: Number(sem)
     });
-    res.status(200).json(subjects);
+    res.status(200).json(pdfSubjects);
   } catch (error) {
     console.error("Error in /api/subjects route:", error);
     res.status(500).json({ error: "Failed to fetch subjects", details: error.message });
   }
 });
 
-// ✅ Fetch PDFs by semester + subject + type
+// ✅ Fetch PDFs by semester + subject + type (Protects 105 legacy PDFs & approved files)
 app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
   try {
     const { semester, subject, type } = req.params;
     
     const query = {
       semester: Number(semester),
-      subject: decodeURIComponent(subject)
+      subject: decodeURIComponent(subject),
+      $or: [
+        { status: 'approved' },
+        { status: { $exists: false } }
+      ]
     };
     
     if (type && type !== 'undefined' && type !== 'null') {
@@ -128,6 +141,34 @@ app.get('/api/notes/:semester/:subject/:type', async (req, res) => {
   } catch (error) {
     console.error("Error in /api/notes route:", error);
     res.status(500).json({ error: "Failed to fetch PDFs", details: error.message });
+  }
+});
+
+// ✅ Public student contribution submission (saves with pending approval)
+app.post('/api/notes/submit', async (req, res) => {
+  try {
+    const { title, subject, semester, type, s3Url, fileUrl, uploaderName } = req.body;
+    const directUrl = s3Url || fileUrl;
+
+    if (!title || !subject || !semester || !directUrl) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const newNote = new PdfNotes({
+      title: title.trim(),
+      subject: subject.trim(),
+      semester: Number(semester),
+      type: type || 'Notes',
+      s3Url: directUrl.trim(),
+      uploaderName: uploaderName?.trim() || 'Student Contributor',
+      status: 'pending'
+    });
+
+    await newNote.save();
+    res.status(201).json({ message: "Submitted successfully for admin review!", note: newNote });
+  } catch (err) {
+    console.error("Public submission error:", err);
+    res.status(500).json({ error: "Failed to submit note", details: err.message });
   }
 });
 
