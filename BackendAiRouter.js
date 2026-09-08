@@ -21,7 +21,7 @@ const saveToCache = (key, data) => {
   aiDocumentCache.set(key, data);
 };
 
-// ── BACKUP STATIC REGISTRY (Used as safety fallback) ─────────────────────────
+// ── BACKUP STATIC REGISTRY ──────────────────────────────────────────────────
 const STATIC_NOTES_LINKS = {
   1: [
     { title: "Engineering Mathematics-I Notes", subject: "Maths", url: "https://example.com/sem1-maths.pdf" },
@@ -44,13 +44,13 @@ const STATIC_NOTES_LINKS = {
     { title: "Design & Analysis of Algorithms Notes", subject: "DAA", url: "https://example.com/sem5-daa.pdf" }
   ],
   6: [
-    { title: "Software Engineering Complete Notes", subject: "SE", url: "https://example.com/sem6-se.pdf" },
+    { title: "Software Engineering Complete Notes", subject: "Software Engineering", url: "https://example.com/sem6-se.pdf" },
     { title: "Compiler Design Question Bank", subject: "Compiler Design", url: "https://example.com/sem6-cd.pdf" },
     { title: "Artificial Intelligence Blueprint", subject: "AI", url: "https://example.com/sem6-ai.pdf" }
   ]
 };
 
-// ── FEATURE: Fetch and extract PDF text (Generous 12,000 char budget) ────────
+// ── FEATURE: Fetch and extract PDF text ──────────────────────────────────────
 async function extractPdfText(url) {
   try {
     const pdfParse = (await import('pdf-parse')).default;
@@ -66,7 +66,16 @@ async function extractPdfText(url) {
   }
 }
 
-// ── 1. CHAT ROUTE (Conversational Tech Peer + Workspace Launcher) ───────────
+// ── Helper: Clean & Extract Subject Keywords ─────────────────────────────────
+function cleanSubjectQuery(rawText) {
+  return rawText
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, " ") // strip punctuation
+    .replace(/\b(give|me|please|show|get|the|of|for|about|all|any|in|and|pdf|pdfs|note|notes|pyq|pyqs|syllabus|paper|papers|exam|solution|solutions|solve|btech|semester|sem|\d+(st|nd|rd|th)?)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ── 1. CHAT ROUTE ────────────────────────────────────────────────────────────
 router.post('/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -85,16 +94,14 @@ router.post('/chat', async (req, res) => {
   try {
     const lower = message.toLowerCase();
 
-    // 1. Detect semester number if mentioned
+    // 1. Detect semester
     const semMatch = message.match(/(?:semester|sem)\s*(\d)/i) || message.match(/(\d)(?:st|nd|rd|th)\s*sem/i);
     if (semMatch) {
       detectedSemester = parseInt(semMatch[1]);
     }
 
-    // 2. Extract subject query keywords
-    const subjectKeywords = message
-      .replace(/give|me|pdf|pdfs|note|notes|pyq|pyqs|syllabus|material|materials|btech|semester|sem|solution|solutions|solve|paper|exam|[0-9]/gi, '')
-      .trim();
+    // 2. Clean subject keywords
+    const cleanedSubject = cleanSubjectQuery(message);
 
     const dbQuery = {
       $or: [{ status: 'approved' }, { status: { $exists: false } }]
@@ -104,22 +111,26 @@ router.post('/chat', async (req, res) => {
       dbQuery.semester = detectedSemester;
     }
 
-    if (subjectKeywords.length >= 2) {
-      dbQuery.$and = [
-        {
-          $or: [
-            { subject: { $regex: subjectKeywords, $options: 'i' } },
-            { title: { $regex: subjectKeywords, $options: 'i' } }
-          ]
-        }
-      ];
+    // 3. Robust regex matching across subject & title
+    if (cleanedSubject.length >= 2) {
+      const searchTerms = cleanedSubject.split(' ').filter(w => w.length > 1);
+      const orClauses = searchTerms.map(term => ({
+        $or: [
+          { subject: { $regex: term, $options: 'i' } },
+          { title: { $regex: term, $options: 'i' } }
+        ]
+      }));
+
+      if (orClauses.length > 0) {
+        dbQuery.$and = orClauses;
+      }
     }
 
-    const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link|solve|solution/i.test(lower);
+    const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link|solve|solution|compiler|software/i.test(lower);
 
-    if (detectedSemester || isResourceQuery || subjectKeywords.length >= 2) {
+    if (detectedSemester || isResourceQuery || cleanedSubject.length >= 2) {
       const liveDbResults = await PdfNotes.find(dbQuery)
-        .limit(6)
+        .limit(8)
         .select('title subject semester type s3Url')
         .lean();
 
@@ -154,15 +165,16 @@ router.post('/chat', async (req, res) => {
     console.error("⚠️ DATABASE SCANNER ERROR:", scannerErr.message);
   }
 
-  // ── Force Academic Topic Diversity across turns ──
-  const compilerModules = [
-    "Syntax-Directed Translation (SDD/SDT) and Annotated Parse Trees",
-    "LR(0) Canonical Collection of Items and Conflict Analysis",
-    "FIRST & FOLLOW set computation with recursive nullable non-terminals and epsilon transitions",
-    "Three-Address Code (TAC), Quadruples, Triples, and Indirect Triples",
-    "Basic Blocks partitioning, Flow Graphs, and DAG Representation for Optimization"
+  // Topic rotation so AI doesn't repeat identical queries
+  const topicList = [
+    "Syntax-Directed Translation & Parse Trees",
+    "Canonical LR(0) Collection & Conflict Resolution",
+    "FIRST & FOLLOW set computation with epsilon transitions",
+    "Three-Address Code (TAC), Quadruples, and Triples",
+    "Software Requirement Engineering & Agile vs Waterfall",
+    "Cyclomatic Complexity & Control Flow Graphs"
   ];
-  const chosenTopic = compilerModules[Math.floor(Math.random() * compilerModules.length)];
+  const chosenTopic = topicList[Math.floor(Math.random() * topicList.length)];
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
 
@@ -175,7 +187,7 @@ CRITICAL IDENTITY RULES:
 CHAT POPUP BREVITY RULE (CRITICAL):
 - When a user asks for PYQs, exam papers, derivations, or problem-solving in this chat:
   1. DO NOT dump huge 50-line derivations, raw TAC code snippets, or markdown tables inside this small chat bubble. Doing so causes output cutoffs.
-  2. Give a short, upbeat response (1-3 sentences) announcing the exam topic and confirming that you are launching the full-screen interactive Exam Workspace (e.g., "Got it! Launching the Compiler Design Exam Workspace for ${chosenTopic}. Let's derive it on the big screen!").
+  2. Give a short, upbeat response (1-2 sentences) announcing the exam topic and confirming that you are launching the full-screen interactive Exam Workspace (e.g., "Got it! Launching the Exam Workspace for your subject. Let's solve it on the big screen!").
   3. The deep mathematical proofs and multi-step derivations will be rendered directly inside the dedicated Exam Solver pane.`;
 
   const targetSystemInstruction = `${baseSystemInstruction}${resourceContext ? '\n\n' + resourceContext : ''}`;
@@ -226,7 +238,7 @@ CHAT POPUP BREVITY RULE (CRITICAL):
   }
 });
 
-// ── 2. DEDICATED ROUTE: FULL-SCREEN EXAM SOLVER (HANDLES REAL & VIRTUAL PAPERS) ──
+// ── 2. DEDICATED ROUTE: FULL-SCREEN EXAM SOLVER ──────────────────────────────
 router.post('/ask-doc', async (req, res) => {
   const { pdfId, prompt } = req.body;
 
@@ -239,7 +251,6 @@ router.post('/ask-doc', async (req, res) => {
     return res.status(500).json({ error: 'GEMINI_API_KEY is missing from environment variables.' });
   }
 
-  // 1. Check cache for repeated questions (Instant return, 0 tokens)
   const normalizedPrompt = prompt.trim().toLowerCase();
   const cacheKey = `${pdfId || 'virtual'}_${normalizedPrompt}`;
 
@@ -251,12 +262,11 @@ router.post('/ask-doc', async (req, res) => {
   try {
     let extractedText = null;
     let docMeta = {
-      title: "University Exam Paper",
-      subject: "Computer Science Engineering",
+      title: "University Exam Document",
+      subject: "Engineering",
       semester: 6
     };
 
-    // Only query Mongo if pdfId is a valid 24-character hex ObjectId
     const isValidObjectId = pdfId && mongoose.Types.ObjectId.isValid(pdfId);
     if (isValidObjectId) {
       const doc = await PdfNotes.findById(pdfId).lean();
@@ -272,12 +282,10 @@ router.post('/ask-doc', async (req, res) => {
 You solve exam questions with thorough, step-by-step mathematical and algorithmic derivations.
 
 DERIVATION STANDARDS:
-1. State the Problem Statement clearly.
-2. Provide step-by-step logic:
-   - For Compiler Design FIRST/FOLLOW: list all transition rules, show nullable non-terminals, and explain epsilon propagation carefully.
-   - For TAC/Quadruples: output the Three-Address Code, then generate complete Markdown tables for Quadruples (Operator, Arg1, Arg2, Result) and Triples.
-   - For Parsing: define items, handle Shift-Reduce/Reduce-Reduce conflict analysis, and write the parsing action/goto steps.
-3. Conclude with a clean, highlighted final answer box.`;
+1. State the exact Problem Statement clearly.
+2. Provide complete, step-by-step logic and mathematical accuracy.
+3. If asked to summarize, list key modules, frequent questions, and mark distributions.
+4. Conclude with a clean, highlighted final answer box.`;
 
     const contextPayload = extractedText
       ? `Document Title: ${docMeta.title} (${docMeta.subject} - Semester ${docMeta.semester})\nDocument Excerpt:\n${extractedText}\n\nStudent Question / Derivation Request: ${prompt}`
