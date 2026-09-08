@@ -8,6 +8,18 @@ const router = express.Router();
 const PRIMARY_MODEL = "gemini-2.5-flash";
 const FALLBACK_MODEL = "gemini-2.5-flash-lite";
 
+// ── EXAM-TRAFFIC CACHE (0-token instant replies for repeated queries) ────────
+const aiDocumentCache = new Map();
+const MAX_CACHE_SIZE = 250;
+
+const saveToCache = (key, data) => {
+  if (aiDocumentCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = aiDocumentCache.keys().next().value;
+    aiDocumentCache.delete(oldestKey);
+  }
+  aiDocumentCache.set(key, data);
+};
+
 // ── BACKUP STATIC REGISTRY (Used as safety fallback) ─────────────────────────
 const STATIC_NOTES_LINKS = {
   1: [
@@ -36,20 +48,23 @@ const STATIC_NOTES_LINKS = {
   ]
 };
 
-// ── FEATURE: Fetch and extract PDF text from Cloudinary/S3 URL ──────────────
+// ── FEATURE: Fetch and extract PDF text (Generous 12,000 char budget) ────────
 async function extractPdfText(url) {
   try {
     const pdfParse = (await import('pdf-parse')).default;
     const response = await fetch(url);
-    const buffer = await response.buffer();
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     const data = await pdfParse(buffer);
-    return data.text.slice(0, 3000); // limit to 3000 chars to stay within token budget
+    // 12,000 chars captures ~4 to 6 full pages of PYQs and theory
+    return data.text.slice(0, 12000);
   } catch (err) {
     console.error("PDF extraction failed:", err.message);
     return null;
   }
 }
 
+// ── 1. CHAT ROUTE (Conversational Tech Peer) ────────────────────────────────
 router.post('/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -69,7 +84,7 @@ router.post('/chat', async (req, res) => {
   try {
     const lower = message.toLowerCase();
     
-    // Detect semester numbers (e.g. "semester 1", "sem 6", "1st sem")
+    // Detect semester numbers
     const semMatch = message.match(/(?:semester|sem)\s*(\d)/i) || message.match(/(\d)(?:st|nd|rd|th)\s*sem/i);
     if (semMatch) {
       detectedSemester = parseInt(semMatch[1]);
@@ -78,7 +93,7 @@ router.post('/chat', async (req, res) => {
     const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link/i.test(lower);
 
     if (detectedSemester || isResourceQuery) {
-      // 1. Query live database
+      // 1. Read-only live database lookup
       const dbQuery = {
         $or: [{ status: 'approved' }, { status: { $exists: false } }]
       };
@@ -87,7 +102,6 @@ router.post('/chat', async (req, res) => {
         dbQuery.semester = detectedSemester;
       }
 
-      // Extract subject keywords
       const cleanedKeywords = message
         .replace(/give|me|pdf|pdfs|note|notes|pyq|pyqs|syllabus|material|materials|btech|semester|sem|[0-9]/gi, '')
         .trim();
@@ -117,7 +131,6 @@ router.post('/chat', async (req, res) => {
           url: doc.s3Url
         }));
       } else if (detectedSemester && STATIC_NOTES_LINKS[detectedSemester]) {
-        // Fallback to static references if DB returned no matches
         matchedResources = STATIC_NOTES_LINKS[detectedSemester].map(s => ({
           title: s.title,
           subject: s.subject,
@@ -127,14 +140,12 @@ router.post('/chat', async (req, res) => {
         }));
       }
 
-      // Build context injection for Gemini
       if (matchedResources.length > 0) {
         semesterContext = `SYSTEM DIRECTIVE: User is asking for study materials${detectedSemester ? ` for Semester ${detectedSemester}` : ''}. You MUST provide these verified resources clearly in your answer with their clickable links:\n`;
         matchedResources.forEach(file => {
           semesterContext += `- ${file.title} (${file.subject} - ${file.type || 'Notes'}): ${file.url}\n`;
         });
 
-        // If student is asking for a solution or summary from the PDF
         const wantsSolution = /solve|explain|solution|answer|summarize|what does|content|read/i.test(message);
         if (wantsSolution && matchedResources[0]?.url && !matchedResources[0].url.includes('example.com')) {
           console.log("📖 Extracting live PDF text for AI context...");
@@ -156,8 +167,6 @@ router.post('/chat', async (req, res) => {
   const targetSystemInstruction = `${baseSystemInstruction}${semesterContext ? '\n\n' + semesterContext : ''}${pdfContentContext}`;
 
   try {
-    console.log(`🤖 Routing to Primary Model: ${PRIMARY_MODEL}`);
-
     const primaryEngineInstance = aiEngine.getGenerativeModel({
       model: PRIMARY_MODEL,
       systemInstruction: targetSystemInstruction
@@ -165,62 +174,137 @@ router.post('/chat', async (req, res) => {
 
     const result = await primaryEngineInstance.generateContent({
       contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 600, temperature: 0.6 }
+      generationConfig: { maxOutputTokens: 750, temperature: 0.6 }
     });
 
-    const aiTextOutput = result.response.text();
     return res.json({ 
-      reply: aiTextOutput, 
+      reply: result.response.text(), 
       modelUsed: PRIMARY_MODEL,
       resources: matchedResources,
       semester: detectedSemester
     });
 
   } catch (primaryError) {
-    const isQuotaCrash = primaryError.status === 429 ||
-      (primaryError.message && primaryError.message.includes('429')) ||
-      (primaryError.message && primaryError.message.toLowerCase().includes('quota'));
-
-    const isServiceUnavailable = primaryError.status === 503 ||
-      (primaryError.message && primaryError.message.includes('503')) ||
-      (primaryError.message && primaryError.message.toLowerCase().includes('unavailable'));
-
-    if (isQuotaCrash || isServiceUnavailable) {
-      const reason = isQuotaCrash ? "rate-limited" : "overloaded (503)";
-      console.warn(`⚠️ SYSTEM NOTICE: ${PRIMARY_MODEL} is ${reason}! Deploying backup model...`);
+    console.warn(`⚠️ Primary Model Error: ${primaryError.message}. Switching to fallback...`);
+    try {
+      const fallbackEngineInstance = aiEngine.getGenerativeModel({
+        model: FALLBACK_MODEL,
+        systemInstruction: targetSystemInstruction
+      });
       
-      try {
-        console.log(`📡 Re-routing to Fallback Model: ${FALLBACK_MODEL}`);
-        const fallbackEngineInstance = aiEngine.getGenerativeModel({
-          model: FALLBACK_MODEL,
-          systemInstruction: targetSystemInstruction
-        });
-        
-        const fallbackResult = await fallbackEngineInstance.generateContent({
-          contents: [{ role: 'user', parts: [{ text: message }] }],
-          generationConfig: { maxOutputTokens: 500, temperature: 0.55 }
-        });
-        
-        const fallbackTextOutput = fallbackResult.response.text();
-        return res.json({ 
-          reply: fallbackTextOutput, 
-          modelUsed: FALLBACK_MODEL,
-          resources: matchedResources,
-          semester: detectedSemester
-        });
-        
-      } catch (fallbackError) {
-        console.error("🚨 CRITICAL: All AI pipelines exhausted due to API demand.");
-        return res.status(503).json({
-          reply: "Hey! My high-speed AI cores are currently facing massive traffic spikes from the core servers right now. Can you try sending that message again in a few seconds, bro?",
-          error: "All free AI pipelines are temporarily saturated."
-        });
-      }
+      const fallbackResult = await fallbackEngineInstance.generateContent({
+        contents: [{ role: 'user', parts: [{ text: message }] }],
+        generationConfig: { maxOutputTokens: 600, temperature: 0.55 }
+      });
+      
+      return res.json({ 
+        reply: fallbackResult.response.text(), 
+        modelUsed: FALLBACK_MODEL,
+        resources: matchedResources,
+        semester: detectedSemester
+      });
+    } catch (fallbackError) {
+      return res.status(503).json({
+        reply: "Hey! The AI system is experiencing high query volumes during exam prep hours. Please retry your message in a few moments, bro.",
+        error: fallbackError.message
+      });
+    }
+  }
+});
+
+// ── 2. DEDICATED ROUTE: ASK / SOLVE FROM SPECIFIC PDF (READ-ONLY) ───────────
+router.post('/ask-doc', async (req, res) => {
+  const { pdfId, prompt } = req.body;
+
+  if (!pdfId || !prompt) {
+    return res.status(400).json({ error: 'Both pdfId and prompt statement are required.' });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is missing from environment variables.' });
+  }
+
+  // 1. Check cache for repeated questions (Instant return, 0 tokens)
+  const normalizedPrompt = prompt.trim().toLowerCase();
+  const cacheKey = `${pdfId}_${normalizedPrompt}`;
+
+  if (aiDocumentCache.has(cacheKey)) {
+    console.log(`⚡ [Cache Hit] Served instant response for query: "${prompt.slice(0, 30)}..."`);
+    return res.status(200).json(aiDocumentCache.get(cacheKey));
+  }
+
+  try {
+    // 2. Read-only search: Safely finds document without modifying DB
+    const doc = await PdfNotes.findById(pdfId).lean();
+    if (!doc || !doc.s3Url) {
+      return res.status(404).json({ error: 'PDF reference record not found.' });
     }
 
-    console.error("======== GENERAL GOOGLE API CRASH TRACKER ========");
-    console.error(primaryError);
-    return res.status(500).json({ error: "Internal processing breakdown.", details: primaryError.message });
+    // 3. Extract text (up to 12,000 characters)
+    const extractedText = await extractPdfText(doc.s3Url);
+
+    const tutorInstruction = "You are an expert engineering professor and exam tutor on StudyNexus. Answer questions and solve problems strictly using the provided course document. If asked to solve a PYQ or numerical problem: state the formula/theorem, write the step-by-step mathematical derivation, and clearly box or highlight the final answer. Keep explanations structured, clean, and exam-focused.";
+
+    const contextPayload = extractedText
+      ? `Document Title: ${doc.title} (${doc.subject} - Semester ${doc.semester})\nDocument Excerpt:\n${extractedText}\n\nStudent Question: ${prompt}`
+      : `Document Title: ${doc.title} (${doc.subject} - Semester ${doc.semester})\nStudent Question: ${prompt}`;
+
+    const aiEngine = new GoogleGenerativeAI(apiKey);
+
+    let answerText = "";
+    let modelUsed = PRIMARY_MODEL;
+
+    // 4. Query with automatic fallback
+    try {
+      const primaryModel = aiEngine.getGenerativeModel({
+        model: PRIMARY_MODEL,
+        systemInstruction: tutorInstruction
+      });
+
+      const result = await primaryModel.generateContent({
+        contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
+        generationConfig: { maxOutputTokens: 850, temperature: 0.5 }
+      });
+      answerText = result.response.text();
+    } catch (primaryErr) {
+      console.warn(`⚠️ Primary Model Error in /ask-doc: ${primaryErr.message}. Switching to fallback...`);
+      const fallbackModel = aiEngine.getGenerativeModel({
+        model: FALLBACK_MODEL,
+        systemInstruction: tutorInstruction
+      });
+
+      const result = await fallbackModel.generateContent({
+        contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
+        generationConfig: { maxOutputTokens: 750, temperature: 0.45 }
+      });
+      answerText = result.response.text();
+      modelUsed = FALLBACK_MODEL;
+    }
+
+    const payload = {
+      answer: answerText,
+      modelUsed,
+      sourceDoc: {
+        id: doc._id,
+        title: doc.title,
+        downloadUrl: doc.s3Url,
+        semester: doc.semester,
+        subject: doc.subject,
+        type: doc.type || 'Notes'
+      }
+    };
+
+    // 5. Cache response for subsequent students
+    saveToCache(cacheKey, payload);
+
+    return res.status(200).json(payload);
+
+  } catch (err) {
+    console.error('Document Solver Critical Error:', err.message);
+    return res.status(500).json({
+      error: 'Unable to analyze the selected document right now. Please try again in a few moments.'
+    });
   }
 });
 
