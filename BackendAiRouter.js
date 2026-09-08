@@ -53,6 +53,7 @@ async function extractPdfText(url) {
   try {
     const pdfParse = (await import('pdf-parse')).default;
     const response = await fetch(url);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const data = await pdfParse(buffer);

@@ -70,6 +70,41 @@ app.get('/api/active-users', (req, res) => {
   return res.json({ count: Math.max(1, activeVisitors.size) });
 });
 
+// ─── Live Real-Time Subjects Catalog (Read-Only) ─────────────────────────────
+// Returns only subjects & semesters that genuinely exist in approved PdfNotes
+app.get('/api/live-subjects', async (req, res) => {
+  try {
+    await connectDB();
+    if (mongoose.connection.readyState !== 1) return res.status(200).json([]);
+
+    const liveList = await PdfNotes.aggregate([
+      {
+        $match: {
+          $or: [{ status: 'approved' }, { status: { $exists: false } }]
+        }
+      },
+      {
+        $group: {
+          _id: { subject: '$subject', semester: '$semester' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          name: '$_id.subject',
+          sem: '$_id.semester'
+        }
+      },
+      { $sort: { name: 1 } }
+    ]).catch(() => []);
+
+    return res.status(200).json(liveList || []);
+  } catch (err) {
+    console.error('Error fetching live subjects:', err.message);
+    return res.status(200).json([]);
+  }
+});
+
 // ─── Subjects Route (Awaits DB connection cleanly) ───────────────────────────
 app.get('/api/subjects/:semId', async (req, res) => {
   try {
