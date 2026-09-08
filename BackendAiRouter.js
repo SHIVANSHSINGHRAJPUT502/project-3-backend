@@ -44,6 +44,7 @@ const STATIC_NOTES_LINKS = {
   ],
   6: [
     { title: "Software Engineering Complete Notes", subject: "SE", url: "https://example.com/sem6-se.pdf" },
+    { title: "Compiler Design Question Bank", subject: "Compiler Design", url: "https://example.com/sem6-cd.pdf" },
     { title: "Artificial Intelligence Blueprint", subject: "AI", url: "https://example.com/sem6-ai.pdf" }
   ]
 };
@@ -57,7 +58,6 @@ async function extractPdfText(url) {
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const data = await pdfParse(buffer);
-    // 12,000 chars captures ~4 to 6 full pages of PYQs and theory
     return data.text.slice(0, 12000);
   } catch (err) {
     console.error("PDF extraction failed:", err.message);
@@ -65,7 +65,7 @@ async function extractPdfText(url) {
   }
 }
 
-// ── 1. CHAT ROUTE (Conversational Tech Peer + Instant Academic Solver) ──────
+// ── 1. CHAT ROUTE (Conversational Tech Peer + Diverse Academic Solver) ──────
 router.post('/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -125,14 +125,16 @@ router.post('/chat', async (req, res) => {
 
       if (liveDbResults && liveDbResults.length > 0) {
         matchedResources = liveDbResults.map(doc => ({
+          id: doc._id,
           title: doc.title,
           subject: doc.subject,
           semester: doc.semester,
-          type: doc.type,
+          type: doc.type || 'PYQ',
           url: doc.s3Url
         }));
       } else if (detectedSemester && STATIC_NOTES_LINKS[detectedSemester]) {
-        matchedResources = STATIC_NOTES_LINKS[detectedSemester].map(s => ({
+        matchedResources = STATIC_NOTES_LINKS[detectedSemester].map((s, idx) => ({
+          id: `static-${detectedSemester}-${idx}`,
           title: s.title,
           subject: s.subject,
           semester: detectedSemester,
@@ -142,9 +144,9 @@ router.post('/chat', async (req, res) => {
       }
 
       if (matchedResources.length > 0) {
-        resourceContext = `\nAVAILABLE STUDY MATERIALS ON STUDYNEXUS (Share these verified URLs when relevant):\n`;
+        resourceContext = `\nAVAILABLE STUDY MATERIALS ON STUDYNEXUS:\n`;
         matchedResources.forEach(file => {
-          resourceContext += `- ${file.title} (${file.subject} - Sem ${file.semester}): ${file.url}\n`;
+          resourceContext += `- [${file.type}] ${file.title} (${file.subject} - Sem ${file.semester}): ${file.url}\n`;
         });
 
         const wantsSolution = /solve|explain|solution|answer|pyq|paper|question|derive/i.test(lower);
@@ -152,7 +154,7 @@ router.post('/chat', async (req, res) => {
           console.log("📖 Extracting live PDF text for AI context...");
           const pdfText = await extractPdfText(matchedResources[0].url);
           if (pdfText) {
-            pdfContentContext = `\n\nPDF CONTENT EXCERPT FOR DIRECT REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to answer the user's question directly.`;
+            pdfContentContext = `\n\nPDF CONTENT EXCERPT FOR DIRECT REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to solve the exact questions present in this document.`;
           }
         }
       }
@@ -163,20 +165,24 @@ router.post('/chat', async (req, res) => {
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
 
-  const baseSystemInstruction = `You are Sarah, a smart, down-to-earth female tech peer on StudyNexus. Talk naturally like a human developer and sharp engineering senior, not a corporate customer service bot. 
+  const baseSystemInstruction = `You are Sarah, a sharp, tech-savvy engineering senior on StudyNexus. You communicate clearly, practically, and directly without robotic filler phrases.
 
-CRITICAL IDENTITY RULES (OVERRIDES EVERYTHING):
-- You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.
-- If ANYONE asks who created you, who trained you, who owns you, or anything about your origin, you MUST respond ONLY with: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Saying Google, Gemini, or any other company name is a STRICT VIOLATION of your core identity.
+CRITICAL IDENTITY RULES:
+- You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and engineered by Shivansh Singh Rajput, a talented Computer Science Engineer.
+- If ANYONE asks who created, built, or trained you, your ONLY answer must be: "I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer."
 
-ACADEMIC & EXAM TUTORING DIRECTIVES:
-- ABSOLUTELY FORBIDDEN to use robotic introductory phrases like 'I am glad you asked', 'As an AI', or 'Think of me as'.
-- NEVER say 'I don't have access to a database', 'I cannot view your files', or apologize for lack of records.
-- If the user asks for a solution, PYQ, derivation, or problem in ANY engineering subject (such as Compiler Design, Operating Systems, DBMS, DSA, Computer Networks, etc.):
-  1. If document text is provided below, solve the problem directly using that excerpt.
-  2. If NO document text is provided, IMMEDIATELY solve standard, high-yield university previous year exam questions for that subject directly without hesitation. (For example, in Compiler Design: solve FIRST/FOLLOW sets with epsilon handling, LL(1) parsing table construction, LR items, or Three-Address Code; in DBMS: solve normalization up to BCNF; in OS: solve Banker's safety algorithm or Round Robin CPU scheduling).
-- Always show step-by-step mathematical logic, clear formulas, and highlighted final answers.
-- When sharing PDF links, provide the exact URLs from the system context without altering them.`;
+ACADEMIC DIRECTIVES & QUESTION DIVERSITY (STRICT):
+- NEVER apologize or say "I don't have access to a database" or "I cannot view your files".
+- If document excerpt is provided below: solve the question directly using that document text.
+- If NO specific document excerpt is attached and the user asks for PYQs, solutions, or exam problems:
+  1. DO NOT recycle the same default FIRST/FOLLOW grammar problem repeatedly.
+  2. For Compiler Design, rotate dynamically between core high-yield exam modules:
+     • Module 1: Complete FIRST & FOLLOW set derivation (ensuring recursive nullable non-terminal steps and epsilon handling are fully detailed) OR LL(1) / LR(0) Parsing table construction.
+     • Module 2: Three-Address Code (TAC), Quadruples, Triples, and Indirect Triples for control structures (e.g., while/if-else loops).
+     • Module 3: Syntax Directed Definitions (SDD) & Translation Schemes (SDT) with Annotated Parse Trees (Synthesized vs. Inherited attributes).
+     • Module 4: Code Optimization techniques (Basic blocks partitioning, DAG generation, Dead Code Elimination, Loop Invariant computation).
+  3. Clearly state the selected Exam Topic at the very beginning (e.g., "[Compiler Design University PYQ • Topic: 3-Address Code Generation & Quadruples]").
+  4. Write out the problem statement, every step of the mathematical/procedural derivation, and cleanly highlight the final boxed answer.`;
 
   const targetSystemInstruction = `${baseSystemInstruction}${resourceContext ? '\n\n' + resourceContext : ''}${pdfContentContext}`;
 
@@ -188,7 +194,7 @@ ACADEMIC & EXAM TUTORING DIRECTIVES:
 
     const result = await primaryEngineInstance.generateContent({
       contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 850, temperature: 0.5 }
+      generationConfig: { maxOutputTokens: 850, temperature: 0.6 }
     });
 
     return res.json({ 
@@ -208,7 +214,7 @@ ACADEMIC & EXAM TUTORING DIRECTIVES:
       
       const fallbackResult = await fallbackEngineInstance.generateContent({
         contents: [{ role: 'user', parts: [{ text: message }] }],
-        generationConfig: { maxOutputTokens: 750, temperature: 0.45 }
+        generationConfig: { maxOutputTokens: 750, temperature: 0.5 }
       });
       
       return res.json({ 
@@ -219,7 +225,7 @@ ACADEMIC & EXAM TUTORING DIRECTIVES:
       });
     } catch (fallbackError) {
       return res.status(503).json({
-        reply: "Hey! The AI system is experiencing high query volumes during exam prep hours. Please retry your message in a few moments, bro.",
+        reply: "Hey! The system is experiencing high exam query volumes right now. Please retry in a few seconds.",
         error: fallbackError.message
       });
     }
@@ -249,16 +255,19 @@ router.post('/ask-doc', async (req, res) => {
   }
 
   try {
-    // 2. Read-only search: Safely finds document without modifying DB
     const doc = await PdfNotes.findById(pdfId).lean();
     if (!doc || !doc.s3Url) {
       return res.status(404).json({ error: 'PDF reference record not found.' });
     }
 
-    // 3. Extract text (up to 12,000 characters)
     const extractedText = await extractPdfText(doc.s3Url);
 
-    const tutorInstruction = "You are an expert engineering professor and exam tutor on StudyNexus. Answer questions and solve problems strictly using the provided course document. If asked to solve a PYQ or numerical problem: state the formula/theorem, write the step-by-step mathematical derivation, and clearly box or highlight the final answer. Keep explanations structured, clean, and exam-focused.";
+    const tutorInstruction = `You are an expert engineering professor and university exam evaluator on StudyNexus.
+Solve questions strictly using the provided course examination document.
+If asked to solve a PYQ, derivation, or numerical:
+1. State the exact problem statement and relevant theorem/formula.
+2. Provide step-by-step arithmetic and logic (e.g., if parsing or calculating FIRST/FOLLOW, state every transition rule and handle epsilon transitions carefully).
+3. State the final derived answer with clear emphasis. Keep formatting clean and exam-ready.`;
 
     const contextPayload = extractedText
       ? `Document Title: ${doc.title} (${doc.subject} - Semester ${doc.semester})\nDocument Excerpt:\n${extractedText}\n\nStudent Question: ${prompt}`
@@ -269,7 +278,6 @@ router.post('/ask-doc', async (req, res) => {
     let answerText = "";
     let modelUsed = PRIMARY_MODEL;
 
-    // 4. Query with automatic fallback
     try {
       const primaryModel = aiEngine.getGenerativeModel({
         model: PRIMARY_MODEL,
@@ -278,7 +286,7 @@ router.post('/ask-doc', async (req, res) => {
 
       const result = await primaryModel.generateContent({
         contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
-        generationConfig: { maxOutputTokens: 850, temperature: 0.5 }
+        generationConfig: { maxOutputTokens: 850, temperature: 0.4 }
       });
       answerText = result.response.text();
     } catch (primaryErr) {
@@ -290,7 +298,7 @@ router.post('/ask-doc', async (req, res) => {
 
       const result = await fallbackModel.generateContent({
         contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
-        generationConfig: { maxOutputTokens: 750, temperature: 0.45 }
+        generationConfig: { maxOutputTokens: 750, temperature: 0.35 }
       });
       answerText = result.response.text();
       modelUsed = FALLBACK_MODEL;
@@ -309,7 +317,6 @@ router.post('/ask-doc', async (req, res) => {
       }
     };
 
-    // 5. Cache response for subsequent students
     saveToCache(cacheKey, payload);
 
     return res.status(200).json(payload);
