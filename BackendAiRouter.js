@@ -1,5 +1,6 @@
 // BackendAiRouter.js
 import express from 'express';
+import mongoose from 'mongoose';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import PdfNotes from './models/PdfNotes.js';
 
@@ -65,7 +66,7 @@ async function extractPdfText(url) {
   }
 }
 
-// ── 1. CHAT ROUTE (Conversational Tech Peer + Diverse Academic Solver) ──────
+// ── 1. CHAT ROUTE (Conversational Tech Peer + Workspace Launcher) ───────────
 router.post('/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -78,7 +79,6 @@ router.post('/chat', async (req, res) => {
   }
 
   let resourceContext = "";
-  let pdfContentContext = "";
   let matchedResources = [];
   let detectedSemester = null;
 
@@ -148,20 +148,21 @@ router.post('/chat', async (req, res) => {
         matchedResources.forEach(file => {
           resourceContext += `- [${file.type}] ${file.title} (${file.subject} - Sem ${file.semester}): ${file.url}\n`;
         });
-
-        const wantsSolution = /solve|explain|solution|answer|pyq|paper|question|derive/i.test(lower);
-        if (wantsSolution && matchedResources[0]?.url && !matchedResources[0].url.includes('example.com')) {
-          console.log("📖 Extracting live PDF text for AI context...");
-          const pdfText = await extractPdfText(matchedResources[0].url);
-          if (pdfText) {
-            pdfContentContext = `\n\nPDF CONTENT EXCERPT FOR DIRECT REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to solve the exact questions present in this document.`;
-          }
-        }
       }
     }
   } catch (scannerErr) {
     console.error("⚠️ DATABASE SCANNER ERROR:", scannerErr.message);
   }
+
+  // ── Force Academic Topic Diversity across turns ──
+  const compilerModules = [
+    "Syntax-Directed Translation (SDD/SDT) and Annotated Parse Trees",
+    "LR(0) Canonical Collection of Items and Conflict Analysis",
+    "FIRST & FOLLOW set computation with recursive nullable non-terminals and epsilon transitions",
+    "Three-Address Code (TAC), Quadruples, Triples, and Indirect Triples",
+    "Basic Blocks partitioning, Flow Graphs, and DAG Representation for Optimization"
+  ];
+  const chosenTopic = compilerModules[Math.floor(Math.random() * compilerModules.length)];
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
 
@@ -171,20 +172,13 @@ CRITICAL IDENTITY RULES:
 - You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and engineered by Shivansh Singh Rajput, a talented Computer Science Engineer.
 - If ANYONE asks who created, built, or trained you, your ONLY answer must be: "I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer."
 
-ACADEMIC DIRECTIVES & QUESTION DIVERSITY (STRICT):
-- NEVER apologize or say "I don't have access to a database" or "I cannot view your files".
-- If document excerpt is provided below: solve the question directly using that document text.
-- If NO specific document excerpt is attached and the user asks for PYQs, solutions, or exam problems:
-  1. DO NOT recycle the same default FIRST/FOLLOW grammar problem repeatedly.
-  2. For Compiler Design, rotate dynamically between core high-yield exam modules:
-     • Module 1: Complete FIRST & FOLLOW set derivation (ensuring recursive nullable non-terminal steps and epsilon handling are fully detailed) OR LL(1) / LR(0) Parsing table construction.
-     • Module 2: Three-Address Code (TAC), Quadruples, Triples, and Indirect Triples for control structures (e.g., while/if-else loops).
-     • Module 3: Syntax Directed Definitions (SDD) & Translation Schemes (SDT) with Annotated Parse Trees (Synthesized vs. Inherited attributes).
-     • Module 4: Code Optimization techniques (Basic blocks partitioning, DAG generation, Dead Code Elimination, Loop Invariant computation).
-  3. Clearly state the selected Exam Topic at the very beginning (e.g., "[Compiler Design University PYQ • Topic: 3-Address Code Generation & Quadruples]").
-  4. Write out the problem statement, every step of the mathematical/procedural derivation, and cleanly highlight the final boxed answer.`;
+CHAT POPUP BREVITY RULE (CRITICAL):
+- When a user asks for PYQs, exam papers, derivations, or problem-solving in this chat:
+  1. DO NOT dump huge 50-line derivations, raw TAC code snippets, or markdown tables inside this small chat bubble. Doing so causes output cutoffs.
+  2. Give a short, upbeat response (1-3 sentences) announcing the exam topic and confirming that you are launching the full-screen interactive Exam Workspace (e.g., "Got it! Launching the Compiler Design Exam Workspace for ${chosenTopic}. Let's derive it on the big screen!").
+  3. The deep mathematical proofs and multi-step derivations will be rendered directly inside the dedicated Exam Solver pane.`;
 
-  const targetSystemInstruction = `${baseSystemInstruction}${resourceContext ? '\n\n' + resourceContext : ''}${pdfContentContext}`;
+  const targetSystemInstruction = `${baseSystemInstruction}${resourceContext ? '\n\n' + resourceContext : ''}`;
 
   try {
     const primaryEngineInstance = aiEngine.getGenerativeModel({
@@ -193,8 +187,8 @@ ACADEMIC DIRECTIVES & QUESTION DIVERSITY (STRICT):
     });
 
     const result = await primaryEngineInstance.generateContent({
-      contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 850, temperature: 0.6 }
+      contents: [{ role: 'user', parts: [{ text: `${message}\n[System Directive: Topic rotation preference: ${chosenTopic}]` }] }],
+      generationConfig: { maxOutputTokens: 350, temperature: 0.7 }
     });
 
     return res.json({ 
@@ -214,7 +208,7 @@ ACADEMIC DIRECTIVES & QUESTION DIVERSITY (STRICT):
       
       const fallbackResult = await fallbackEngineInstance.generateContent({
         contents: [{ role: 'user', parts: [{ text: message }] }],
-        generationConfig: { maxOutputTokens: 750, temperature: 0.5 }
+        generationConfig: { maxOutputTokens: 300, temperature: 0.6 }
       });
       
       return res.json({ 
@@ -232,12 +226,12 @@ ACADEMIC DIRECTIVES & QUESTION DIVERSITY (STRICT):
   }
 });
 
-// ── 2. DEDICATED ROUTE: ASK / SOLVE FROM SPECIFIC PDF (READ-ONLY) ───────────
+// ── 2. DEDICATED ROUTE: FULL-SCREEN EXAM SOLVER (HANDLES REAL & VIRTUAL PAPERS) ──
 router.post('/ask-doc', async (req, res) => {
   const { pdfId, prompt } = req.body;
 
-  if (!pdfId || !prompt) {
-    return res.status(400).json({ error: 'Both pdfId and prompt statement are required.' });
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt statement is required.' });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -247,7 +241,7 @@ router.post('/ask-doc', async (req, res) => {
 
   // 1. Check cache for repeated questions (Instant return, 0 tokens)
   const normalizedPrompt = prompt.trim().toLowerCase();
-  const cacheKey = `${pdfId}_${normalizedPrompt}`;
+  const cacheKey = `${pdfId || 'virtual'}_${normalizedPrompt}`;
 
   if (aiDocumentCache.has(cacheKey)) {
     console.log(`⚡ [Cache Hit] Served instant response for query: "${prompt.slice(0, 30)}..."`);
@@ -255,23 +249,39 @@ router.post('/ask-doc', async (req, res) => {
   }
 
   try {
-    const doc = await PdfNotes.findById(pdfId).lean();
-    if (!doc || !doc.s3Url) {
-      return res.status(404).json({ error: 'PDF reference record not found.' });
+    let extractedText = null;
+    let docMeta = {
+      title: "University Exam Paper",
+      subject: "Computer Science Engineering",
+      semester: 6
+    };
+
+    // Only query Mongo if pdfId is a valid 24-character hex ObjectId
+    const isValidObjectId = pdfId && mongoose.Types.ObjectId.isValid(pdfId);
+    if (isValidObjectId) {
+      const doc = await PdfNotes.findById(pdfId).lean();
+      if (doc) {
+        docMeta = doc;
+        if (doc.s3Url) {
+          extractedText = await extractPdfText(doc.s3Url);
+        }
+      }
     }
 
-    const extractedText = await extractPdfText(doc.s3Url);
+    const tutorInstruction = `You are Sarah, an expert engineering professor and university exam evaluator on StudyNexus, created by Shivansh Singh Rajput.
+You solve exam questions with thorough, step-by-step mathematical and algorithmic derivations.
 
-    const tutorInstruction = `You are an expert engineering professor and university exam evaluator on StudyNexus.
-Solve questions strictly using the provided course examination document.
-If asked to solve a PYQ, derivation, or numerical:
-1. State the exact problem statement and relevant theorem/formula.
-2. Provide step-by-step arithmetic and logic (e.g., if parsing or calculating FIRST/FOLLOW, state every transition rule and handle epsilon transitions carefully).
-3. State the final derived answer with clear emphasis. Keep formatting clean and exam-ready.`;
+DERIVATION STANDARDS:
+1. State the Problem Statement clearly.
+2. Provide step-by-step logic:
+   - For Compiler Design FIRST/FOLLOW: list all transition rules, show nullable non-terminals, and explain epsilon propagation carefully.
+   - For TAC/Quadruples: output the Three-Address Code, then generate complete Markdown tables for Quadruples (Operator, Arg1, Arg2, Result) and Triples.
+   - For Parsing: define items, handle Shift-Reduce/Reduce-Reduce conflict analysis, and write the parsing action/goto steps.
+3. Conclude with a clean, highlighted final answer box.`;
 
     const contextPayload = extractedText
-      ? `Document Title: ${doc.title} (${doc.subject} - Semester ${doc.semester})\nDocument Excerpt:\n${extractedText}\n\nStudent Question: ${prompt}`
-      : `Document Title: ${doc.title} (${doc.subject} - Semester ${doc.semester})\nStudent Question: ${prompt}`;
+      ? `Document Title: ${docMeta.title} (${docMeta.subject} - Semester ${docMeta.semester})\nDocument Excerpt:\n${extractedText}\n\nStudent Question / Derivation Request: ${prompt}`
+      : `Subject: ${docMeta.subject} (Semester ${docMeta.semester})\nTarget Exam Request: ${prompt}\n(Derive this university examination question completely from first principles).`;
 
     const aiEngine = new GoogleGenerativeAI(apiKey);
 
@@ -286,7 +296,7 @@ If asked to solve a PYQ, derivation, or numerical:
 
       const result = await primaryModel.generateContent({
         contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
-        generationConfig: { maxOutputTokens: 850, temperature: 0.4 }
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.3 }
       });
       answerText = result.response.text();
     } catch (primaryErr) {
@@ -298,7 +308,7 @@ If asked to solve a PYQ, derivation, or numerical:
 
       const result = await fallbackModel.generateContent({
         contents: [{ role: 'user', parts: [{ text: contextPayload }] }],
-        generationConfig: { maxOutputTokens: 750, temperature: 0.35 }
+        generationConfig: { maxOutputTokens: 1800, temperature: 0.25 }
       });
       answerText = result.response.text();
       modelUsed = FALLBACK_MODEL;
@@ -308,12 +318,12 @@ If asked to solve a PYQ, derivation, or numerical:
       answer: answerText,
       modelUsed,
       sourceDoc: {
-        id: doc._id,
-        title: doc.title,
-        downloadUrl: doc.s3Url,
-        semester: doc.semester,
-        subject: doc.subject,
-        type: doc.type || 'Notes'
+        id: docMeta._id || pdfId || 'virtual-doc',
+        title: docMeta.title,
+        downloadUrl: docMeta.s3Url || null,
+        semester: docMeta.semester,
+        subject: docMeta.subject,
+        type: docMeta.type || 'PYQ'
       }
     };
 
