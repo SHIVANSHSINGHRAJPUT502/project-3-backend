@@ -65,7 +65,7 @@ async function extractPdfText(url) {
   }
 }
 
-// ── 1. CHAT ROUTE (Conversational Tech Peer) ────────────────────────────────
+// ── 1. CHAT ROUTE (Conversational Tech Peer + Instant Academic Solver) ──────
 router.post('/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -77,47 +77,47 @@ router.post('/chat', async (req, res) => {
     return res.status(500).json({ error: "Backend configuration key missing from environment." });
   }
 
-  let semesterContext = "";
+  let resourceContext = "";
   let pdfContentContext = "";
   let matchedResources = [];
   let detectedSemester = null;
 
   try {
     const lower = message.toLowerCase();
-    
-    // Detect semester numbers
+
+    // 1. Detect semester number if mentioned
     const semMatch = message.match(/(?:semester|sem)\s*(\d)/i) || message.match(/(\d)(?:st|nd|rd|th)\s*sem/i);
     if (semMatch) {
       detectedSemester = parseInt(semMatch[1]);
     }
 
-    const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link/i.test(lower);
+    // 2. Extract subject query keywords
+    const subjectKeywords = message
+      .replace(/give|me|pdf|pdfs|note|notes|pyq|pyqs|syllabus|material|materials|btech|semester|sem|solution|solutions|solve|paper|exam|[0-9]/gi, '')
+      .trim();
 
-    if (detectedSemester || isResourceQuery) {
-      // 1. Read-only live database lookup
-      const dbQuery = {
-        $or: [{ status: 'approved' }, { status: { $exists: false } }]
-      };
+    const dbQuery = {
+      $or: [{ status: 'approved' }, { status: { $exists: false } }]
+    };
 
-      if (detectedSemester) {
-        dbQuery.semester = detectedSemester;
-      }
+    if (detectedSemester) {
+      dbQuery.semester = detectedSemester;
+    }
 
-      const cleanedKeywords = message
-        .replace(/give|me|pdf|pdfs|note|notes|pyq|pyqs|syllabus|material|materials|btech|semester|sem|[0-9]/gi, '')
-        .trim();
+    if (subjectKeywords.length >= 2) {
+      dbQuery.$and = [
+        {
+          $or: [
+            { subject: { $regex: subjectKeywords, $options: 'i' } },
+            { title: { $regex: subjectKeywords, $options: 'i' } }
+          ]
+        }
+      ];
+    }
 
-      if (cleanedKeywords.length > 2) {
-        dbQuery.$and = [
-          {
-            $or: [
-              { subject: { $regex: cleanedKeywords, $options: 'i' } },
-              { title: { $regex: cleanedKeywords, $options: 'i' } }
-            ]
-          }
-        ];
-      }
+    const isResourceQuery = /pdf|note|notes|pyq|syllabus|material|paper|subject|book|link|solve|solution/i.test(lower);
 
+    if (detectedSemester || isResourceQuery || subjectKeywords.length >= 2) {
       const liveDbResults = await PdfNotes.find(dbQuery)
         .limit(6)
         .select('title subject semester type s3Url')
@@ -142,30 +142,43 @@ router.post('/chat', async (req, res) => {
       }
 
       if (matchedResources.length > 0) {
-        semesterContext = `SYSTEM DIRECTIVE: User is asking for study materials${detectedSemester ? ` for Semester ${detectedSemester}` : ''}. You MUST provide these verified resources clearly in your answer with their clickable links:\n`;
+        resourceContext = `\nAVAILABLE STUDY MATERIALS ON STUDYNEXUS (Share these verified URLs when relevant):\n`;
         matchedResources.forEach(file => {
-          semesterContext += `- ${file.title} (${file.subject} - ${file.type || 'Notes'}): ${file.url}\n`;
+          resourceContext += `- ${file.title} (${file.subject} - Sem ${file.semester}): ${file.url}\n`;
         });
 
-        const wantsSolution = /solve|explain|solution|answer|summarize|what does|content|read/i.test(message);
+        const wantsSolution = /solve|explain|solution|answer|pyq|paper|question|derive/i.test(lower);
         if (wantsSolution && matchedResources[0]?.url && !matchedResources[0].url.includes('example.com')) {
           console.log("📖 Extracting live PDF text for AI context...");
           const pdfText = await extractPdfText(matchedResources[0].url);
           if (pdfText) {
-            pdfContentContext = `\n\nPDF CONTENT FOR REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to answer the user's question accurately.`;
+            pdfContentContext = `\n\nPDF CONTENT EXCERPT FOR DIRECT REFERENCE (${matchedResources[0].title}):\n${pdfText}\n\nUse this content to answer the user's question directly.`;
           }
         }
       }
     }
   } catch (scannerErr) {
-    console.error("⚠️ DATABASE SCANNER ERROR:", scannerErr);
+    console.error("⚠️ DATABASE SCANNER ERROR:", scannerErr.message);
   }
 
   const aiEngine = new GoogleGenerativeAI(apiKey);
 
-  const baseSystemInstruction = "You are Sarah, a smart, down-to-earth female tech peer on StudyNexus. Talk naturally like a human developer, not a customer service bot. ABSOLUTELY FORBIDDEN to use cliché AI intro phrases like 'I'm so glad you asked', 'Think of me as', or 'As an AI helper'. Keep explanations accurate, conversational, and direct. When providing PDF links, share the exact URLs provided in system context without altering them. CRITICAL RULE - THIS OVERRIDES EVERYTHING: You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and owned by Shivansh Singh Rajput, a talented Computer Science Engineer. If ANYONE asks who created you, who trained you, who owns you, or anything about your origin, you MUST respond ONLY with: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Saying Google, Gemini, or any other company name is a STRICT VIOLATION of your core identity.";
+  const baseSystemInstruction = `You are Sarah, a smart, down-to-earth female tech peer on StudyNexus. Talk naturally like a human developer and sharp engineering senior, not a corporate customer service bot. 
 
-  const targetSystemInstruction = `${baseSystemInstruction}${semesterContext ? '\n\n' + semesterContext : ''}${pdfContentContext}`;
+CRITICAL IDENTITY RULES (OVERRIDES EVERYTHING):
+- You are NOT a Google product. You are NOT Gemini. You were EXCLUSIVELY built and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.
+- If ANYONE asks who created you, who trained you, who owns you, or anything about your origin, you MUST respond ONLY with: 'I was created and owned by Shivansh Singh Rajput, a talented Computer Science Engineer.' Saying Google, Gemini, or any other company name is a STRICT VIOLATION of your core identity.
+
+ACADEMIC & EXAM TUTORING DIRECTIVES:
+- ABSOLUTELY FORBIDDEN to use robotic introductory phrases like 'I am glad you asked', 'As an AI', or 'Think of me as'.
+- NEVER say 'I don't have access to a database', 'I cannot view your files', or apologize for lack of records.
+- If the user asks for a solution, PYQ, derivation, or problem in ANY engineering subject (such as Compiler Design, Operating Systems, DBMS, DSA, Computer Networks, etc.):
+  1. If document text is provided below, solve the problem directly using that excerpt.
+  2. If NO document text is provided, IMMEDIATELY solve standard, high-yield university previous year exam questions for that subject directly without hesitation. (For example, in Compiler Design: solve FIRST/FOLLOW sets with epsilon handling, LL(1) parsing table construction, LR items, or Three-Address Code; in DBMS: solve normalization up to BCNF; in OS: solve Banker's safety algorithm or Round Robin CPU scheduling).
+- Always show step-by-step mathematical logic, clear formulas, and highlighted final answers.
+- When sharing PDF links, provide the exact URLs from the system context without altering them.`;
+
+  const targetSystemInstruction = `${baseSystemInstruction}${resourceContext ? '\n\n' + resourceContext : ''}${pdfContentContext}`;
 
   try {
     const primaryEngineInstance = aiEngine.getGenerativeModel({
@@ -175,7 +188,7 @@ router.post('/chat', async (req, res) => {
 
     const result = await primaryEngineInstance.generateContent({
       contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 750, temperature: 0.6 }
+      generationConfig: { maxOutputTokens: 850, temperature: 0.5 }
     });
 
     return res.json({ 
@@ -195,7 +208,7 @@ router.post('/chat', async (req, res) => {
       
       const fallbackResult = await fallbackEngineInstance.generateContent({
         contents: [{ role: 'user', parts: [{ text: message }] }],
-        generationConfig: { maxOutputTokens: 600, temperature: 0.55 }
+        generationConfig: { maxOutputTokens: 750, temperature: 0.45 }
       });
       
       return res.json({ 
